@@ -1,0 +1,6 @@
+#!/usr/bin/env python3
+"""运维 HTTP 客户端入口。"""
+from import_module.cli import main
+
+if __name__ == '__main__':
+    raise SystemExit(main())

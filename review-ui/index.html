@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>导入审核台</title>
+  <link rel="stylesheet" href="/import-review/style.css">
+  <script src="/import-review/app.js" defer></script>
+</head>
+<body>
+  <header class="masthead">
+    <div><p class="eyebrow">CN MATH TAXONOMY / IMPORT</p><h1>导入审核台</h1></div>
+    <div class="header-note">运维工作区<br><span>机器草稿 · 人工门闸</span></div>
+  </header>
+  <div class="notice" role="note">内容可能由 AI / 机器生成，无教师背书。新知识点与新题必须人工确认；本次骨架仅支持 mappings 应用。</div>
+  <main class="workspace">
+    <aside class="job-panel" aria-label="导入任务">
+      <div class="panel-title"><h2>任务记录</h2><button id="refresh" class="quiet" type="button">刷新</button></div>
+      <label for="status-filter">状态筛选</label>
+      <select id="status-filter">
+        <option value="">全部状态</option><option value="needs_review">待审核</option>
+        <option value="approved">已批准</option><option value="applied">已应用</option>
+        <option value="queued">排队中</option><option value="running">处理中</option>
+        <option value="failed">失败</option><option value="rejected">已驳回</option>
+      </select>
+      <p id="job-count" class="muted"></p><ol id="jobs" class="job-list"></ol>
+    </aside>
+    <section class="detail-panel" aria-labelledby="detail-title">
+      <p id="empty" class="empty">选择左侧任务，查看原文、草稿差异与校验报告。</p>
+      <div id="detail" hidden>
+        <div class="detail-heading"><div><p id="job-id" class="eyebrow"></p><h2 id="detail-title"></h2></div><span id="job-state" class="badge"></span></div>
+        <p id="metadata" class="muted"></p>
+        <p id="job-error" class="error" role="alert"></p>
+        <section class="review-actions" aria-label="审核决定">
+          <label for="comment">审核评论 / 驳回原因</label>
+          <textarea id="comment" rows="2" placeholder="驳回必须填写原因；通过前请核对原文与差异。"></textarea>
+          <div class="action-row"><button id="approve" type="button">通过审核</button><button id="reject" type="button" class="danger">驳回</button><button id="apply" type="button" class="quiet">应用 mappings</button></div>
+          <p class="footnote">通过只记录审批。校验失败不能入库；目录扩点的多文件应用、题目及课标编辑尚未提供。</p>
+        </section>
+        <details open><summary>源文本预览 <span>最多 64 KiB</span></summary><pre id="source"></pre></details>
+        <details open><summary>草稿差异 <span>相对当前正式工作副本</span></summary><pre id="diff"></pre></details>
+        <details><summary>完整校验与解析报告</summary><pre id="reports"></pre></details>
+      </div>
+    </section>
+  </main>
+  <p id="message" class="message" role="status" aria-live="polite"></p>
+</body>
+</html>

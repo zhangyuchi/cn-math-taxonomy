@@ -1,0 +1,12 @@
+{
+  "cnm": {"subject": "math", "domain": "数与代数", "stages": [[1, 6, "cnm_p"], [7, 9, "cnm_"], [10, 14, "cnm_h"]]},
+  "cne": {"subject": "english", "domain": "词汇", "stages": [[3, 6, "cne_p"], [7, 9, "cne_j"], [10, 16, "cne_h"]]},
+  "cnc": {"subject": "chinese", "domain": "阅读理解", "stages": [[1, 6, "cnc_p"], [7, 9, "cnc_j"]]},
+  "cnp": {"subject": "physics", "domain": "物质", "stages": [[8, 9, "cnp_"], [10, 15, "cnp_h"]]},
+  "cns": {"subject": "science", "domain": "物质科学", "stages": [[1, 6, "cns_p"]]},
+  "cnd": {"subject": "morality", "domain": "社会规则", "stages": [[1, 6, "cnd_p"]]},
+  "cnh": {"subject": "history", "domain": "中国古代史", "stages": [[7, 9, "cnh_j"]]},
+  "cng": {"subject": "geography", "domain": "地球与地图", "stages": [[7, 8, "cng_j"]]},
+  "cnb": {"subject": "biology", "domain": "生物体的结构层次", "stages": [[7, 8, "cnb_j"]]},
+  "cnk": {"subject": "chemistry", "domain": "物质的性质与应用", "stages": [[9, 9, "cnk_j"]]}
+}

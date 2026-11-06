@@ -64,8 +64,10 @@ ID 前缀（与现库一致，导入时按此前缀选学科校验与续号策�
 | `cnp` | 物理 |
 | `cns` | 科学 |
 | `cnh` | 历史 |
-| `cnd` | 地理 |
-| `cng` | （现库已有前缀；导入时按 topics 实存前缀表配置，禁止臆造新前缀） |
+| `cnd` | 道德与法治 |
+| `cng` | 地理 |
+| `cnb` | 生物 |
+| `cnk` | 化学 |
 
 人教版目录仍是 topic 本体的 `grade` / `semester` / `chapter`；其他版本只写 mappings（见 `docs/edition-mappings.md`）。
 
@@ -506,4 +508,19 @@ failed|rejected → requeue → queued
 | apply | 将 approved 草稿合并进正式库的原子操作 |
 | expand | 教材导入的扩图模式 |
 | mappings_only | 仅版本对照、不新建知识点 |
+
+## 附录 C：2026-11-06 实现准入修订（本次骨架的优先约定）
+
+本附录经 advisor 审核后补充，优先于本文中冲突的完整 v1 描述。
+原文“本会话只设计”指 11 月 3 日的设计会话；11 月 6 日的实现已由任务简报授权。
+本次是**可运行骨架与教材文本链路**，不代表第 10.1 节完整 v1 已实现。
+
+1. **Schema（B1）**：以现有 `scripts/validate.py` 为准。配置覆盖现库十个学科前缀与学段 ID；difficulty 采用现库 `challenge`（兼容 `advanced`）。现有 mappings validator 只支持数学、英语；其他学科 mappings 返回 `MAPPINGS_SUBJECT_UNSUPPORTED`，不修改上游 validator 放宽规则。
+2. **TOC 与覆盖率（B2）**：expand 生成真实占位草稿、相邻 soft 边、课标建议及完整候选校验报告后进入 `needs_review`。不伪造题库以通过覆盖率，不臆造跨正式库的先修边。孤立点、覆盖率缺口在报告中保留。`overrideCoverage` 不得绕过正式校验，本次不提供该 bypass。端到端 apply 使用含显式 topicId 的 mappings 文本/CSV。
+3. **应用范围（B3）**：本次仅实现 mappings 单文件事务。expand/paper 必须先检查人工审批；未批准返回 `REVIEW_REQUIRED`，批准后返回 `APPLY_SCOPE_UNSUPPORTED`，正式库不变。paper 接受真实 job、保留源文件，worker 返回 `PIPELINE_NOT_IMPLEMENTED`；PDF 优先返回 `OCR_REQUIRED`。多文件事务与题目解析属于完整 v1 后续工作，禁止把多次 `os.replace` 宣称为整体原子事务。
+4. **门闸与恢复（B4）**：客户端不能决定 requiresHumanReview。自动审批要求 textbook+mappings_only 且 topics/dependencies/questions/standards_suggestions 实际为空。所有审批绑定完整 draft 摘要，apply 重新比对；变化后需重新审批。per-job 锁保护决策，单 worker 锁保护队列消费，全库 apply 锁冲突返回 409。替换前持久化目标前后摘要及 intent；中断后若目标等于已提交摘要则恢复 applied，否则在旧摘要时安全重试，第三种摘要拒绝恢复。源文件不可变；requeue 仅重试原源，改源创建新 job。
+5. **数据隔离（B5）**：`IMPORT_WORKSPACE` 为含正式数据副本与 `data/imports/<jobId>/` 的独立持久目录，不得位于公开静态根或 releases。代码可在仓库，状态不能随发布目录切换。本次 API 仅绑定 loopback，审核使用独立端口；生产必须独立 origin，禁止受现有 SW 控制的同源部署。不依赖 Cache-Control 或 gitignore 解决静态泄露。job/diff/files/review 与写操作统一鉴权；文件限制在 job 内，源内容以文本展示。
+6. **发布边界（B6）**：当前 qqvps 工作树服务尚未切到 `/srv/.../current`（来自任务简报，未在本次连接 VPS 核实）。发布产物与持久工作区分离；apply 更新工作区，不自动更新在线静态数据。数据需经明确审阅、交付并另行发布。现发布脚本尚无健康检查失败回滚保证，本次不运行发布或修改生产 nginx/systemd。
+
+具体接口、状态恢复、测试和验收见 [实现计划](../plans/2026-11-06-import-module-implementation.md)。
 

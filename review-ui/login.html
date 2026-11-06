@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>导入审核 · 运维登录</title>
+  <link rel="stylesheet" href="/import-login/style.css">
+  <script src="/import-login/login.js" defer></script>
+</head>
+<body class="login-page">
+  <main class="login-sheet">
+    <p class="eyebrow">CN MATH TAXONOMY / IMPORT</p>
+    <h1>导入审核台</h1>
+    <p class="muted">仅供运维与审核人员访问。请使用独立端口，通过安全隧道连接。</p>
+    <form id="login-form">
+      <label for="token">运维 token</label>
+      <input id="token" name="token" type="password" required autocomplete="off" spellcheck="false">
+      <button type="submit">进入审核台 <span aria-hidden="true">→</span></button>
+    </form>
+    <p id="login-error" role="alert"></p>
+    <p class="footnote">登录后建立 8 小时会话。token 不写入浏览器持久存储。</p>
+  </main>
+</body>
+</html>

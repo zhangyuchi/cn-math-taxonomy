@@ -2,7 +2,8 @@
 
 - **日期**：2026-11-06（Asia/Shanghai）
 - **开发机**：horndalf-aipower → `~/Projects/github.com/cn-math-taxonomy`
-- **线上**：qqvps-cd → `/srv/cn-math-taxonomy/current`（勿再在 git 工作树上直接改线上）
+- **线上现状**：按 2026-11-06 任务简报，qqvps-cd 仍由工作树 + `python -m http.server` 服务；本次未连接 VPS 复核。
+- **发布目标**：`/srv/cn-math-taxonomy/current`（目录已准备，尚未切流；切换需独立验收）。
 
 ## 远程
 
@@ -43,3 +44,11 @@ git rebase main                     # 或 merge main；团队统一用一种
 3. nginx / systemd 配置放在机器上（仓库里只留示例），避免和服务端私有路径绑死在上游树里。
 
 静态站阶段仍可用现有 gate + `/k12-knowledge-graph/`；导入 API/worker 上线后再加独立 unit，重活优先放开发机。
+
+## 导入工作区与发布的所有权
+
+- 代码属于 Git release；导入运行状态属于独立持久 `IMPORT_WORKSPACE`，目录内包含正式数据副本及 `data/imports/`，不得放到静态根、`current` 或 `releases/` 下。
+- `apply` 只更新该工作区，不触发站点发布。需将经过审阅的正式数据另行交付并发布；不得让 `git archive` 覆盖运行状态。
+- API 与审核台使用独立 loopback 端口，远程运维通过 SSH 转发；生产要求 gate + TLS 与独立 origin，避免现有 SW 缓存 job、原文和审核请求。
+- 本次只提交并推送 `feat/import-module`，不执行 main 同步、打部署标签、线上切流或生产配置修改。
+- 当前发布脚本在重启前切换 `current`，没有健康检查及失败回滚；使用前必须在独立发布任务中完善和验收，不将示例视为生产保证。
