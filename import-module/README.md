@@ -12,6 +12,7 @@
 
 ```bash
 python3 -W error::ResourceWarning -m unittest discover -s tests -p 'test_import_module.py' -v
+python3 -W error::ResourceWarning -m unittest discover -s tests -p 'test_ocr_mineru.py' -v
 python3 -m unittest discover -s tests -p 'test_publish.py' -v
 python3 import-module/smoke.py
 ```
@@ -140,9 +141,66 @@ python3 import-cli paper --prefix cnm --file exam.pdf
 ```
 
 fixture只检查PDF标记并输出原创固定MD，**不识别PDF，不代表OCR准确率验收**。成功后只发布 `source/normalized.md`，进入与文本相同的流水线，机器内容仍须校对。
-真实引擎应在开发机用户空间安装，并提供符合上述参数的适配程序（例如PDF页渲染+中文OCR+规范化MD）。替换argv为该适配器即可；本仓库不捆绑真实OCR引擎或中文模型。无真实引擎时仍可用fixture验收接口，不能将固定输出用于真实入库。VPS unit不配置重OCR。
 `IMPORT_OCR_TIMEOUT` 默认120秒，上限600；超时终止整个插件进程组。输出必须非空普通文件、非符号链接、UTF-8、≤1MiB。成功报告保留pluginSha256/confidence=unreviewed；失败删除旧normalized，保留原PDF与错误。
 错误：`OCR_REQUIRED`、`OCR_PAGES_REQUIRED`、`OCR_CONFIG_INVALID`、`OCR_FAILED`、`OCR_TIMEOUT`、`OCR_OUTPUT_INVALID`。
+
+### aipower 的 HOME MinerU 安装
+
+真实 OCR 仅在开发机 `aipower` 使用。稳定入口为 `/home/zhangjun/tools/mineru/venv/bin/mineru`（其他用户为 `$HOME/tools/mineru/venv/bin/mineru`）。这是独立 Python 3.12 环境，适配器通过 `Path.home()` 定位，不需要激活 venv；`pdf_md/.venv` 仅作过 CLI 参考，不是安装来源或运行依赖。仓库不捆绑引擎、模型和用户环境配置。
+
+固定 MinerU **2.5.4**、CPU PyTorch **2.8.0+cpu**、torchvision **0.23.0+cpu**、transformers **4.49.0**。2.5.4 CLI 直接执行解析器，继承 worker 的进程组；参考环境 3.4.5 会另起 API 进程组，不能直接替换。4.x 也变更了 CLI。升级必须重新验证参数、输出路径和超时清理。
+
+在 Linux x86_64 上重建（需要已安装 `uv`、网络和足够磁盘）：
+
+```bash
+cd /home/zhangjun/Projects/github.com/cn-math-taxonomy
+uv python install 3.12
+uv venv --python 3.12 "$HOME/tools/mineru/venv"
+uv pip sync --python "$HOME/tools/mineru/venv/bin/python" \
+  --extra-index-url https://download.pytorch.org/whl/cpu \
+  --index-strategy unsafe-best-match import-module/mineru-requirements.txt
+uv pip check --python "$HOME/tools/mineru/venv/bin/python"
+"$HOME/tools/mineru/venv/bin/mineru" --version
+```
+
+锁定文件记录本次独立安装的全部依赖。首次生成它所用的安装命令为：
+
+```bash
+uv pip install --python "$HOME/tools/mineru/venv/bin/python" \
+  'mineru[pipeline]==2.5.4' 'torch==2.8.0+cpu' \
+  'torchvision==0.23.0+cpu' 'transformers==4.49.0' \
+  --extra-index-url https://download.pytorch.org/whl/cpu --index-strategy unsafe-best-match
+```
+
+适配器默认 `pipeline` + `ocr` + `ch`，`MINERU_DEVICE_MODE=cpu`、`MINERU_MODEL_SOURCE=modelscope`（可由开发机环境覆盖）。模型按需下载至 HOME 的 `~/.cache/modelscope`，Hugging Face 来源使用 `~/.cache/huggingface`；首次下载计入调用时间，宜先预热。旧缓存可能缺少该版本需要的模型，不能仅凭缓存目录存在判断可用。不修改已有 `~/mineru.json`；选择 `MINERU_MODEL_SOURCE=local` 前须确认其 `models-dir.pipeline` 包含本版本所需模型。环境和模型通常占用数 GiB，应在安装前以 `df -h "$HOME"` 检查空间。
+
+仅在 **aipower worker 所在终端**配置；JSON argv 使用绝对路径，shell 不会替换 JSON 内的 `$HOME` 或 `~`：
+
+```bash
+export IMPORT_OCR_COMMAND='["/usr/bin/python3", "/home/zhangjun/Projects/github.com/cn-math-taxonomy/import-module/ocr_mineru.py"]'
+export IMPORT_OCR_TIMEOUT=600
+export OMP_NUM_THREADS=4
+export MKL_NUM_THREADS=4
+python3 import-worker
+```
+
+本机另保存同等配置于 `/home/zhangjun/tools/mineru/import-ocr.env`，可先 `source /home/zhangjun/tools/mineru/import-ocr.env`，再在已配置 `IMPORT_WORKSPACE` 的终端启动 worker。这不会自动改变已运行 worker 的环境。
+
+独立验证示例（将输入替换为真实 PDF）：
+
+```bash
+source /home/zhangjun/tools/mineru/import-ocr.env
+timeout -k 5s 600s /usr/bin/python3 \
+  /home/zhangjun/Projects/github.com/cn-math-taxonomy/import-module/ocr_mineru.py \
+  --input /absolute/path/toc.pdf --output /tmp/toc-ocr.md \
+  --kind textbook --pages 1-2,5
+```
+
+`--pages` 为 1-based，最多10页，与 worker 相同；上述页码分别转换为 `-s 0 -e 1`、`-s 4 -e 4`，按序合并，不识别间隙页。教材不允许空页码，paper 可用 `--pages ''` 识别整卷。适配器使用每任务临时目录，仅在全部页段成功且合并 MD 合法后写目标；临时图像及中间文件退出即清理。超时仅由 worker 统一负责，独立运行时使用上述外层 `timeout`。
+
+与 fixture 的区别：fixture 返回固定测试文本；此适配器实际调用本地 MinerU。OCR Markdown 不保证包含导入试卷所需的 `topicId/answer/type` 等结构化字段，仍可能因文本结构而解析失败；需根据报告修订为本文“文本卷”的格式再导入。公式、题图、目录层级及识别文本均须人工校对，适配器不会生成缺失答案或绕过审核，也不交付临时题图资源。
+
+**qqvps 不配置此命令、不安装重 OCR。** 保持 `deploy/systemd/import-worker.service.example` 和安装器的 `IMPORT_OCR_COMMAND=`；VPS 使用已校对的文本导入。fixture 继续只用于协议验收，不能代替真实识别。
 
 ## 事务、失败与恢复
 
