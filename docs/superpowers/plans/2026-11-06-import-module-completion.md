@@ -1,6 +1,6 @@
 # 导入模块完整 v1 与生产切流计划
 
-日期：2026-11-06；负责人：本会话主代理；Task Mode：design-build；Outcome Status：in-progress（advisor GO_WITH_FIXES，六项准入约定已闭合）。
+日期：2026-11-06；负责人：本会话主代理；Task Mode：design-build；Outcome Status：complete（本轮A–F实现/部署验收完成，终审GO；Git收尾以last-message为准）。
 本计划承接骨架，取代旧计划中的非目标；历史审核记录仍只证明当时骨架。
 
 ## 证据、目标与边界
@@ -112,3 +112,9 @@ I-12（resolved，DC7）：进程死亡留下atomic临时文件阻断恢复；�
 I-13（resolved，DC10）：发布恢复曾依赖网络/新ref成功；改为独占锁内先恢复，网络/非法ref失败不再阻断旧站恢复，5项发布回归通过。
 I-14（resolved，DC7）：worker生成before备份可大于入站限制；分离入站大小策略与恢复结构/摘要验证，保留after 1MiB上限。
 以上由新advisor独立终审核查，代码与聚焦测试已修复，最终整体验收/生产更新和GO仍需记录。
+
+## 最终追踪与判定
+
+新advisor `/root/final_advisor` 对 `c135f4403e1257ed745683582a83721377273c19` 给出终审 **GO**，无剩余实现/部署阻塞；主代理最终判定 **GO**。四项终审修复均闭合。
+DC6→CHG6→V6（paper与门闸）；DC7→CHG7→V7（版本审批/修订恢复/大备份）；DC8→CHG8→V8（三/四文件事务、全部引用重映射与故障恢复）；DC9→CHG9→V9（OCR默认关闭/fixture/失败边界）；DC10→CHG10→V10（真实current切流/实际回滚/独立鉴权）；DC11→CHG11→V11（52+5测试、smoke/Chromium/原回归/93SHA与独立终审）均有实现和验证证据。
+Issues与Blocks均无open；Follow-ups仅限本轮明确范围外，未把完整v1/OCR接口/生产切流延期。终审后仅记录结论并交付文档，不再改变运行代码。最终普通push与同代码发布SHA记录在忽略的 `.codex-run/last-message.md`，避免提交自引用。
