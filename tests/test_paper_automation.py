@@ -72,7 +72,7 @@ D. $-2$
         qs = result['draft']['questions']
         self.assertEqual(len(qs), 2)
         self.assertEqual(len(qs[0]['choices']), 4)
-        self.assertEqual(qs[0]['explanation'], '2 大于零。')
+        self.assertTrue(qs[0]['explanation'].endswith('### 详细解答\n2 大于零。'))
         self.assertEqual(qs[1]['answer'], '$\\frac{1}{2}$')
         self.assertEqual(qs[1]['type'], 'short')
 
@@ -110,7 +110,7 @@ explanation: 解析。
 ''')
         self.assertEqual(result['status'], 'needs_review', result['error'])
         self.assertEqual([q['answer'] for q in result['draft']['questions']], ['2', '4'])
-        self.assertEqual(result['draft']['questions'][0]['explanation'], '解析。')
+        self.assertTrue(result['draft']['questions'][0]['explanation'].endswith('### 详细解答\n解析。'))
         result = self.scan('''## Q1
 prompt: 选择正数。
 type: choice

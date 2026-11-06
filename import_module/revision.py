@@ -99,4 +99,4 @@ def revise(service, job_id, draft, expected_digest, comment=''):
                 raise
             from .worker import write_reports
             write_reports(service, job_id, draft, details)
-            return meta
+            return service.get(job_id)

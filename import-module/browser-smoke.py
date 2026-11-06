@@ -39,9 +39,18 @@ with tempfile.TemporaryDirectory(prefix='cn-math-import-browser-') as temporary:
                                      label='浏览器验收示例', source='原创测试目录', autoApplyMappings=False))['jobId']
     run_once(service)
     paper = service.create_job('paper', 'exam.md',
-        '## Q1\ndifficulty: standard\ntype: numeric\nprompt: 负数-2的相反数是多少？\nanswer: 2\nexplanation: 相反数之和为零。\nverify: 2\n'.encode(),
+        '## Q1\ndifficulty: standard\ntype: numeric\nprompt: 负数-2的相反数是多少？\nanswer: 2\nsolutionHint: 用相反数定义。<script>alert(1)</script>\nsolutionDetail: 相反数之和为零。\nverify: 2\n'.encode(),
         dict(subjectPrefix='cnm'))['jobId']
     run_once(service)
+    uncertain = service.create_job('paper', 'uncertain.md',
+        'Q1\nprompt: 图中有几个点？\nanswer: 2\n'.encode(), dict(subjectPrefix='cnm'))['jobId']
+    run_once(service)
+    uncertain_draft = service.draft(uncertain)
+    uncertain_draft['questions'][0]['answer'] = ''
+    uncertain_draft['questions'][0]['explanation'] = (
+        '### 思路提示\n【生成补答，待人工复核】【答案不确定】【依赖原图/需对照原卷】先读取图示。'
+        '\n\n### 详细解答\n缺少图示，不能确定点数。')
+    service.revise(uncertain, uncertain_draft, service.draft_digest(uncertain))
     token = secrets.token_urlsafe(32)
     server = make_server(service, token, port=0)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -59,6 +68,12 @@ with tempfile.TemporaryDirectory(prefix='cn-math-import-browser-') as temporary:
             page.get_by_label('运维 token').fill(token)
             page.get_by_role('button', name='进入审核台').click()
             page.wait_for_url('**/import-review/')
+            page.locator('button[data-id="' + uncertain + '"]').click()
+            expect(page.locator('#answer-preview')).to_contain_text('未填写，禁止入库')
+            expect(page.locator('#answer-preview')).to_contain_text('PAPER_ANSWER_UNCERTAIN')
+            expect(page.locator('#answer-preview')).to_contain_text('思路提示')
+            expect(page.locator('#answer-preview')).to_contain_text('详细解答')
+            page.screenshot(path=str(OUT / 'import-review-two-part-empty.png'), full_page=True)
             page.locator('button[data-id="' + mapping + '"]').click()
             expect(page.locator('#job-state')).to_have_text('待审核')
             page.get_by_label('审核评论 / 驳回原因').fill('已对照示例目录')
@@ -67,6 +82,11 @@ with tempfile.TemporaryDirectory(prefix='cn-math-import-browser-') as temporary:
             page.get_by_role('button', name='应用到工作副本', exact=True).click()
             expect(page.locator('#job-state')).to_have_text('已应用')
             page.locator('button[data-id="' + paper + '"]').click()
+            expect(page.locator('#answer-preview')).to_contain_text('思路提示')
+            expect(page.locator('#answer-preview')).to_contain_text('详细解答')
+            expect(page.locator('#answer-preview')).to_contain_text('最终答案：2')
+            expect(page.locator('#answer-preview')).to_contain_text('<script>alert(1)</script>')
+            assert page.locator('#answer-preview script').count() == 0
             page.get_by_text('修订完整草稿', exact=True).click()
             draft = service.draft(paper)
             draft['questions'][0]['topicId'] = 'cnm_001'

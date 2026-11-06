@@ -5,8 +5,10 @@ import re
 
 from .store import SUBJECTS, ImportErrorResponse, read_json
 from .paper_ocr import parse_choices, structure_paper
+from .answers import format_explanation
 
-FIELDS = {'topicId', 'difficulty', 'type', 'prompt', 'answer', 'explanation', 'verify', 'choices', 'unordered'}
+FIELDS = {'topicId', 'difficulty', 'type', 'prompt', 'answer', 'explanation', 'verify', 'choices', 'unordered',
+          'solutionHint', 'solutionDetail'}
 HEADER = re.compile(r'^\s*(?:#{1,6}\s+Q\d+|Q\d+|\d+[.、])\s*(.*)$', re.I)
 
 
@@ -110,7 +112,8 @@ def parse_paper(service, meta, content, suffix=None, *, ocr=False):
             qid = tid + '_qdraft' + str(number)
             q = dict(id=qid, topicId=tid, type=row.get('type') or ('choice' if row.get('choices') else 'numeric'),
                      difficulty=row.get('difficulty') or 'standard', prompt=row['prompt'].strip(),
-                     answer=row['answer'].strip(), explanation=row.get('explanation') or '导入草稿，待审：请补充解析')
+                     answer=row['answer'].strip(), explanation=format_explanation(
+                         row.get('explanation', ''), row.get('solutionHint', ''), row.get('solutionDetail', '')))
             if row.get('choices'):
                 q['choices'] = parse_choices(row['choices'])
             if row.get('verify'):

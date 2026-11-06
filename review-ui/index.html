@@ -36,6 +36,7 @@
           <div class="action-row"><button id="approve" type="button">通过审核</button><button id="reject" type="button" class="danger">驳回</button><button id="apply" type="button" class="quiet">应用到工作副本</button></div>
           <p class="footnote">通过绑定当前显示的草稿版本。修订后须重新批准；校验或答案核验失败不能入库。apply不会自动发布线上数据。</p>
         </section>
+        <details open><summary>逐题答案与解析 <span>思路提示 → 详细解答</span></summary><div id="answer-preview"></div></details>
         <details open><summary>源文本预览 <span>最多 64 KiB</span></summary><pre id="source"></pre></details>
         <details><summary>修订完整草稿</summary>
           <p class="footnote">在下方 JSON 中校对题干/答案与 topicId；补齐新点、依赖去留/强度及已有课标 standards 对象。课标建议仅供参考，不自动挂靠。保存后审批失效，须重新审核。覆盖率不能绕过。</p>

@@ -53,6 +53,10 @@ def write_reports(service, job_id, draft, parse_details=None):
     if service.get(job_id)['type'] == 'paper':
         parse.update(question_risks(service, job_id, draft['questions']))
         parse.setdefault('initialRisks', parse['questionRisks'])
+        # 风险与当前草稿同源；调用方后续保存状态时须重读，避免旧 meta 覆盖。
+        meta = service.get(job_id)
+        meta['flags'].update(riskCodes=parse['riskCodes'], requiresHumanReview=True)
+        service.save(meta)
     atomic_json(directory / 'reports/parse.json', parse)
     verify = verify_questions(draft['questions'])
     atomic_json(directory / 'reports/verify.json', verify)
@@ -101,6 +105,7 @@ def _process(service, job_id):
                 service._approve_locked(job_id, automatic=True)
                 automatic = True
             else:
+                meta = service.get(job_id)
                 meta['status'] = 'needs_review'
                 service.save(meta)
         except ImportErrorResponse as exc:

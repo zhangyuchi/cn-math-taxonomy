@@ -6,6 +6,7 @@ from urllib.parse import unquote, urlsplit
 
 from .limits import MAX_OCR_BYTES, MIB
 from .store import atomic_bytes, digest_bytes
+from .answers import GENERATED, UNCERTAIN, ORIGINAL
 
 MAX_ASSET_BYTES = 16 * MIB
 MAX_ASSETS_BYTES = 64 * MIB
@@ -114,6 +115,15 @@ def question_risks(service, job_id, questions):
                 missing.append(ref)
         answer_missing = not isinstance(q.get('answer'), str) or not q['answer'].strip()
         current = []
+        explanation = q.get('explanation', '')
+        explanation = explanation if isinstance(explanation, str) else ''
+        generated, uncertain, original = (marker in explanation for marker in (GENERATED, UNCERTAIN, ORIGINAL))
+        if generated:
+            current.append('PAPER_ANSWER_GENERATED')
+        if uncertain:
+            current.append('PAPER_ANSWER_UNCERTAIN')
+        if original:
+            current.append('PAPER_ORIGINAL_REVIEW_REQUIRED')
         if answer_missing:
             current.append('PAPER_ANSWER_MISSING')
         if missing:
@@ -122,6 +132,7 @@ def question_risks(service, job_id, questions):
             current.append('PAPER_ASSET_REVIEW_REQUIRED')
         if current:
             risks.append(dict(id=q.get('id'), answerMissing=answer_missing, missingAssets=missing,
-                              assets=assets, riskCodes=current, requiresHumanReview=True))
+                              assets=assets, riskCodes=current, requiresHumanReview=True,
+                              generated=generated, answerUncertain=uncertain, originalRequired=original))
             codes.update(current)
     return dict(questionRisks=risks, riskCodes=sorted(codes), requiresHumanReview=True)

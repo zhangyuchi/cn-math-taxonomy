@@ -38,6 +38,11 @@ textarea { resize: vertical; }
 .badge[data-state="needs_review"] { color: #88470d; border-color: #b99262; background: #f2e7ce; }
 .badge[data-state="applied"] { color: var(--green); background: #e1e7dc; }
 .badge[data-state="failed"] { color: var(--red); }
+.answer-card { border-bottom: 1px solid var(--line); padding: 18px 0; }
+.answer-card h3 { font-size: 14px; overflow-wrap: anywhere; }
+.answer-card h4 { margin: 12px 0 4px; color: var(--green); }
+.answer-card pre { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; margin: 0; }
+.answer-risk { color: var(--red); font-size: 12px; overflow-wrap: anywhere; }
 .review-actions { border-top: 2px solid var(--green); border-bottom: 1px solid var(--line); padding: 18px 0; margin: 22px 0; }
 .action-row { display: flex; flex-wrap: wrap; gap: 9px; margin-top: 12px; }
 .footnote { color: var(--muted); font-size: 11px; margin: 12px 0 0; }

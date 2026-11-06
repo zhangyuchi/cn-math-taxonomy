@@ -114,13 +114,36 @@ difficulty: standard
 type: numeric
 prompt: 负数-2的相反数是多少？
 answer: 2
-explanation: 相反数之和为零。
+solutionHint: 利用相反数之和为零。
+solutionDetail: -2+2=0，所以-2的相反数是2。
 verify: -(-2)
 EOF
 python3 import-cli paper --prefix cnm --file "$IMPORT_WORKSPACE/exam.md"
 ```
 
-TXT 也可使用 `Q1`、`1.`、`1、` 编号块；CSV 使用 `prompt,answer,type,difficulty,topicId,choices,explanation,verify,unordered` 列，可选列可以省略。选择题选项、字段续行等完整格式见[模块“文本卷”说明](../../../import-module/README.md#文本卷)。
+TXT 也可使用 `Q1`、`1.`、`1、` 编号块；CSV 使用 `prompt,answer,type,difficulty,topicId,choices,explanation,solutionHint,solutionDetail,verify,unordered` 列，可选列可以省略。选择题选项、字段续行等完整格式见[模块“文本卷”说明](../../../import-module/README.md#文本卷)。
+
+### 两段答案如何填写与审核
+
+`answer` 保留短的最终结果：选择题是 `A` / `B` 等选项键，填空/解答题是计算结果或最终结论。`numeric` 多值使用逗号分隔数值；带分问标签或多行结论时应设为 `short`。提示和解题过程都放在解析侧，不能塞入选择题答案。输入 `solutionHint` / `solutionDetail` 会合成以下 `explanation`，也可直接填写这一多行字符串：
+
+```markdown
+### 思路提示
+利用相反数之和为零。
+
+### 详细解答
+-2+2=0，所以-2的相反数是2。
+```
+
+旧解析会完整放入“详细解答”，未提供提示时明确待补。OCR 接受 `【思路提示】`、`【详细解答】` 标签；不同输入写出冲突内容时不会互相覆盖。正式题库仍只保存既有 `answer`、`explanation`，不增加题字段。
+
+审核台选择任务后，先看默认展开的**“逐题答案与解析”**：每题显示最终答案、待核对风险、“思路提示”和“详细解答”。空答案明确显示“未填写，禁止入库”。如需修改，展开“修订完整草稿”，编辑 JSON 中的 `answer` / `explanation` 后保存并重新审核。
+
+原卷没有答案时，系统先保留空稿，不会自行调用通用数学求解器。已撰写的补答可通过[离线补答与 revise 操作](../../../import-module/README.md#两段解析与无答案卷补答)回填同一任务，不必重新 OCR。清单严格绑定任务、PDF 摘要、草稿摘要和完整题目 ID 集合，只回填空答案与占位解析，版本过期须重新读稿。状态仍为 `needs_review`，须人审后才能批准/apply。
+
+本卷补答只允许使用**初一（七年级）及此前知识**，不得使用初二/初三或高中技巧，也不得超出题干可推出的内容。图、表或关键公式不清楚时，可以写已确认的步骤与一般思路，必须说明“依赖原图/需对照原卷”；残缺选项不能猜正确字母，答案继续留空。两段内容已齐全也不能代替非空答案和正式校验。
+
+生成补答会带 `【生成补答，待人工复核】`；不确定和原文依赖另有 `【答案不确定】`、`【依赖原图/需对照原卷】`。对应风险在解析报告与任务 flags 中可见，表示编辑者声明和待审要求，不代表数学已核验。人工核对后可修订并删除已解决的注记，历史稿保留审计。只填了解析但 `answer` 仍空的题继续禁止正式入库。
 
 每道成功导入题都有 `topicId`：保留合法显式点；未填写或填写同前缀未知 ID 时，自动选择同 `--prefix` 学科内匹配得分最高的现有非 external 知识点。显式跨学科 ID 返回 `SUBJECT_CONFLICT`；该学科无可用知识点则整卷失败 `NO_TOPIC_CANDIDATES`，不会虚构或跨科兜底。人工只做业务复核，必要时可改挂点，无需逐题补点。仍须检查解析题数及 `unparsed`，不能把“命令成功提交”视为“卷子已全部解析”。
 

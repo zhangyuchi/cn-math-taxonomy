@@ -8,6 +8,37 @@ let selected = null;
 let displayed = null;
 const node = (id) => document.getElementById(id);
 
+// 使用原文节点展示两段解析；不执行草稿 HTML，也不把完整解析放进短答案。
+function renderAnswers(meta) {
+  const preview = node('answer-preview');
+  preview.replaceChildren();
+  const risks = new Map((meta.reports.parse.questionRisks || []).map(risk => [risk.id, risk]));
+  for (const [index, question] of (meta.draft.questions || []).entries()) {
+    const article = document.createElement('article');
+    article.className = 'answer-card';
+    const title = document.createElement('h3');
+    title.textContent = '第 ' + (index + 1) + ' 题 · ' + question.id;
+    const answer = document.createElement('p');
+    answer.textContent = '最终答案：' + (question.answer || '未填写，禁止入库');
+    const risk = document.createElement('p');
+    risk.className = 'answer-risk';
+    const codes = risks.get(question.id);
+    risk.textContent = codes ? '待核对：' + codes.riskCodes.join(' / ') : '';
+    article.append(title, answer, risk);
+    const explanation = question.explanation || '';
+    const parts = /^### 思路提示\s*\n([\s\S]*?)\n+### 详细解答\s*\n([\s\S]*)$/.exec(explanation);
+    for (const [label, text] of [['思路提示', parts ? parts[1] : '旧草稿未分段，请修订。'],
+                                 ['详细解答', parts ? parts[2] : explanation]]) {
+      const heading = document.createElement('h4');
+      const content = document.createElement('pre');
+      heading.textContent = label;
+      content.textContent = text;
+      article.append(heading, content);
+    }
+    preview.append(article);
+  }
+}
+
 // 所有 job 内容只经 textContent 展示，不将上传文本解释成 HTML。
 async function request(path, body) {
   const options = { credentials: 'same-origin', cache: 'no-store' };
@@ -57,6 +88,7 @@ async function showJob(id) {
   node('draft-editor').value = JSON.stringify(meta.draft, null, 2);
   node('draft-digest').textContent = meta.draftSha256;
   node('reports').textContent = JSON.stringify(meta.reports, null, 2);
+  renderAnswers(meta);
   setActions(meta);
   for (const button of node('jobs').querySelectorAll('button')) {
     button.setAttribute('aria-current', String(button.dataset.id === id));

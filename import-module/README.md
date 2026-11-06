@@ -15,6 +15,7 @@
 python3 -W error::ResourceWarning -m unittest discover -s tests -p 'test_import_module.py' -v
 python3 -W error::ResourceWarning -m unittest discover -s tests -p 'test_ocr_mineru.py' -v
 python3 -W error::ResourceWarning -m unittest discover -s tests -p 'test_paper_automation.py' -v
+python3 -W error::ResourceWarning -m unittest discover -s tests -p 'test_paper_answers.py' -v
 python3 -m unittest discover -s tests -p 'test_publish.py' -v
 python3 import-module/smoke.py
 ```
@@ -80,7 +81,8 @@ difficulty: standard
 type: numeric
 prompt: 负数-2的相反数是多少？
 answer: 2
-explanation: 相反数之和为零。
+solutionHint: 利用相反数之和为零。
+solutionDetail: -2+2=0，所以-2的相反数是2。
 verify: -(-2)
 ```
 
@@ -94,7 +96,45 @@ choices:
 answer: A
 ```
 
-CSV列：`prompt,answer,type,difficulty,topicId,choices,explanation,verify,unordered`，可选列可省略；choices为JSON数组或分号分隔 `A:文字;B:文字;C:文字`。
+CSV列：`prompt,answer,type,difficulty,topicId,choices,explanation,solutionHint,solutionDetail,verify,unordered`，可选列可省略；choices为JSON数组或分号分隔 `A:文字;B:文字;C:文字`。
+
+### 两段解析与无答案卷补答
+
+`answer` 只存最终结果：选择题存选项键，填空/解答题存结果。`numeric` 多值沿用逗号分隔数值；带分问标签或多行结论须使用 `short`。`solutionHint`、`solutionDetail` 是输入字段，解析后合成既有 `explanation`，不向正式题目增加字段：
+
+```markdown
+### 思路提示
+利用相反数之和为零。
+
+### 详细解答
+-2+2=0，所以-2的相反数是2。
+```
+
+也可直接在 `explanation:` 后提供上述多行格式。OCR 支持 `【思路提示】`、`【详细解答】` 或带冒号的中文标签。旧 `explanation` 完整保留为详细解答，提示注明“原文未提供思路提示，待人工补充”；缺解析时仍明确待补，不自动编造解法。混合字段内容冲突时拒绝该块（OCR 整卷结构失败），不得静默覆盖。
+
+审核台选中任务后，“逐题答案与解析”默认展开，可直接阅读最终答案、风险及两段正文；所有内容按纯文本显示。编辑仍使用“修订完整草稿”的 `answer` / `explanation`；保存后重新送审。
+
+无原卷答案时，解析器保留空答案；本模块没有通用自动求解器。可用离线转换器将**已按七年级知识撰写、仍需人工复核**的补答清单回填空稿，禁止用初二/初三或高中技巧，不得超出题干可推出的内容。知识范围由编辑者声明并由人审确认，程序不证明数学正确性。选择题 OCR 残缺时不猜字母；题图、表格或关键分数不清时只写可靠的思路框架和已知步骤，明确“依赖原图/需对照原卷”，保留空 `answer`。
+
+```bash
+python3 import-cli draft <jobId> > "$IMPORT_WORKSPACE/before.json"
+# 按下述清单格式撰写 solutions.json，覆盖该快照全部题 ID
+python3 -m import_module.answers --snapshot "$IMPORT_WORKSPACE/before.json" \
+  --solutions "$IMPORT_WORKSPACE/solutions.json" --output "$IMPORT_WORKSPACE/revised.json"
+IMPORT_ANSWER_DIGEST=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["expectedDraftSha256"])' "$IMPORT_WORKSPACE/revised.json")
+python3 import-cli revise <jobId> --file "$IMPORT_WORKSPACE/revised.json" \
+  --expected-digest "$IMPORT_ANSWER_DIGEST" --comment '七年级生成补答，待人工复核'
+```
+
+清单顶层严格包含 `jobId`、`sourceSha256`（均取快照同名值）、`expectedDraftSha256`（取快照 `draftSha256`）、`knowledgeScope: "grade7"`、`solutions`。每行格式如下，ID 必须来自快照，不能重复、缺题或多题：
+
+```json
+{"id":"快照中的题ID","answer":"","hint":"先读取图中条件，再列式。","detail":"关键图示未核实，依赖原图/需对照原卷，暂不能确定最终结果。","answerUncertain":true,"originalRequired":true}
+```
+
+`answerUncertain` / `originalRequired` 必须为布尔值；任一为 true 时只接受空答案。能确定结果时两者均为 false 并填写答案。只允许待审数学卷、空答案与空/占位解析，已有实质内容须人工通过 `revise` 编辑；错任务、错源、过期摘要、题集不符或覆盖内容都会拒绝。转换器只生成本地 JSON；`revise` 再次在锁内核对摘要，保留修订历史，状态仍为 `needs_review`，不会批准或 apply。
+
+生成稿正文含 `【生成补答，待人工复核】`，按需含 `【答案不确定】` / `【依赖原图/需对照原卷】`。当前 `questionRisks` 推导 `generated`、`answerUncertain`、`originalRequired`；报告及 meta flags 汇总 `PAPER_ANSWER_GENERATED`、`PAPER_ANSWER_UNCERTAIN`、`PAPER_ORIGINAL_REVIEW_REQUIRED`，并保留空答案/图片原有风险。注记是编辑声明，不是机器准确性认证；人工确认并修订后可删除相应注记，旧稿仍在修订审计中。**两段齐全不等于答案完整；空答案仍被原 validator 拦截，生成稿仍须人工批准。** 正式 schema、候选导出及 apply 都继续使用原有 `answer` / `explanation`。
 
 ```bash
 python3 import-cli paper --prefix cnm --file exam.md

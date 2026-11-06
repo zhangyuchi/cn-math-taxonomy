@@ -16,13 +16,15 @@ RUBRIC = re.compile(r'^(?:解答应写出文字说明[、，,]演算步骤或证
                     r'每(?:小)?题\s*' + RUBRIC_NUMBER + r'\s*分))*|'
                     r'每(?:小)?题\s*' + RUBRIC_NUMBER + r'\s*分)[。．.]?$')
 ANSWER_HEADING = re.compile(r'^(?:参考答案(?:及解析|与解析)?|答案及解析|答案与解析|答案解析|参考解答|答案)\s*[:：]?\s*$')
-LABEL = re.compile(r'【\s*(答案|参考答案|解析|分析|详解|解答|难度|题型)\s*】\s*[:：]?|'
-                   r'(?:^|\n)\s*(答案|参考答案|解析|分析|详解|解答|难度|题型|'
-                   r'prompt|answer|explanation|type|difficulty|topicId|choices|verify|unordered)\s*[:：]')
+LABEL = re.compile(r'【\s*(思路提示|详细解答|答案|参考答案|解析|分析|详解|解答|难度|题型)\s*】\s*[:：]?|'
+                   r'(?:^|\n)\s*(思路提示|详细解答|答案|参考答案|解析|分析|详解|解答|难度|题型|'
+                   r'solutionHint|solutionDetail|prompt|answer|explanation|type|difficulty|topicId|choices|verify|unordered)\s*[:：]|'
+                   r'(?:^|\n)\s*(思路提示|详细解答)\s*(?=\n|$)')
 KEYS = {'答案': 'answer', '参考答案': 'answer', '解答': 'answer', '解析': 'explanation',
-        '分析': 'explanation', '详解': 'explanation', '难度': 'difficulty', '题型': 'type'}
+        '分析': 'explanation', '详解': 'explanation', '难度': 'difficulty', '题型': 'type',
+        '思路提示': 'solutionHint', '详细解答': 'solutionDetail'}
 KEYS.update({key: key for key in ('prompt', 'answer', 'explanation', 'type', 'difficulty', 'topicId',
-                                 'choices', 'verify', 'unordered')})
+                                'choices', 'verify', 'unordered', 'solutionHint', 'solutionDetail')})
 OPTION = re.compile(r'(?:^|\s)([A-DＡ-Ｄ])\s*[.．、:：)）]\s*')
 BRACKET_OPTION = re.compile(r'(?:\\left\s*)?[(（]\s*'
                             r'(?:(?:\\(?:mathbf|mathrm|text|mathit))\s*\{\s*)?'
@@ -122,11 +124,13 @@ def _fail(code, reason, structure, source):
 
 def _fields(body):
     """提取中文字段标签；重复标签仅在内容一致时允许合并。"""
+    # _line 已去除独立 Markdown 标题；同行 explanation: ### 标题在这里归一化。
+    body = re.sub(r'(?m)^(?:explanation\s*[:：]\s*)?#{1,6}\s*(思路提示|详细解答)\s*$', r'\1:', body)
     matches = list(LABEL.finditer(body))
     prefix = body[:matches[0].start()].strip() if matches else body.strip()
     fields = {'prompt': prefix} if prefix else {}
     for index, match in enumerate(matches):
-        key = KEYS[match[1] or match[2]]
+        key = KEYS[next(group for group in match.groups() if group)]
         value = body[match.end():matches[index+1].start() if index+1 < len(matches) else len(body)].strip()
         if key in fields and fields[key] != value:
             raise ValueError('相同字段出现冲突：' + key)
