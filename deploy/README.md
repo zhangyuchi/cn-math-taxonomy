@@ -61,3 +61,9 @@ python3 import-module/smoke.py
 ```
 
 发布测试使用真实git archive/HTTP与受控systemd替身，覆盖预检失败、首次迁移失败恢复current不存在/原服务、后续失败恢复旧current/drop-in。生产还需本轮现场HTTP/浏览器证据，不能仅凭这些测试宣称已切流。
+
+## 可选独立错题服务
+
+[错题本v1](../wrongbook/README.md)使用 `wrongbook-current`（独立代码目录/指针）与 `wrongbook-workspace`（0700持久目录），不复用 `IMPORT_WORKSPACE` 或 `IMPORT_TOKEN`。示例unit为 [wrongbook-api.service.example](systemd/wrongbook-api.service.example)，仅loopback8766、192MiB内存上限，无OCR/LLM后台工作。工作区需在启用unit前创建并交给ubuntu；代码目录须含 `wrongbook/` 与只读正式 `data/`。本轮不安装此服务或调整共享nginx/gate。
+
+用户通过服务主机CLI离线provision获得独立0600 token文件，使用SSH转发访问。额外静态根通过 `WRONGBOOK_STATIC_ROOTS` 显式列出；代码树、current/releases及其symlink目标禁止存放数据库/备份/token。数据库通过CLI在线备份，生产运维每日保留至少7份及异机加密副本；恢复步骤见[使用指南](../docs/superpowers/guides/2026-11-06-wrongbook-user-guide.md)。不把源库、备份或token复制进release；即使手工启动 `python -m http.server` 也必须指定纯静态目录。

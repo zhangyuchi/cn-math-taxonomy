@@ -131,7 +131,7 @@ class Publisher:
             with tarfile.open(fileobj=archive) as source:
                 source.extractall(release, filter='data')
         for relative in ('data/imports', '.codex-run', '.github', 'review-ui', 'import_module', 'import-module',
-                         'import-api', 'import-worker', 'import-cli'):
+                         'import-api', 'import-worker', 'import-cli', 'wrongbook'):
             path = release/relative
             if path.is_dir(): shutil.rmtree(path)
             elif path.exists() or path.is_symlink(): path.unlink()

@@ -30,6 +30,9 @@ class PublishAcceptance(unittest.TestCase):
         (self.git / 'data/mappings').mkdir(parents=True)
         for name in ('topics', 'dependencies', 'questions', 'cn-curriculum-standards', 'id-aliases'):
             (self.git / f'data/{name}.json').write_text('[{"id":"test"}]' if name != 'id-aliases' else '{}')
+        backend = self.git / 'wrongbook/store.py'
+        backend.parent.mkdir()
+        backend.write_text('# private backend fixture')
         self.commit('first')
         self.deploy_root = self.root / 'srv'
         self.deploy_root.mkdir()
@@ -119,6 +122,7 @@ raise SystemExit(1)
         self.assertNotEqual(previous, self.git)
         self.assertEqual((previous/'index.html').read_bytes(), (self.git/'index.html').read_bytes())
         self.assertFalse((previous/'data/imports').exists())
+        self.assertFalse((previous/'wrongbook').exists())
         old_override = (self.units/'cn-math.service.d/zz-release.conf').read_bytes()
         (self.git/'index.html').write_text('<!doctype html>second release')
         self.commit('second page')

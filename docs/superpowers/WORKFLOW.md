@@ -49,3 +49,7 @@ git rebase main                     # 或 merge main；团队统一用一种
 - API/review位于独立loopback8765+token/session；默认SSH转发到开发机独立端口，避开站点SW origin。静态release排除审核台与导入入口。重OCR不在VPS默认启用。
 - 本轮授权完整v1、OCR接口验收、生产切流及普通push origin/feat/import-module；上一轮“只骨架、不切流”属于历史范围。不得force-push或改坏同机其他站。
 - 上游validator仍是最终数据契约；导入不替代历史build。重放build前先合齐导入正式结果，禁止与apply并发写同一workspace。
+
+## 服务端错题本
+
+`feat/wrongbook-server` 从 `feat/import-module@105c218` 派生，包含导入模块已有提交；新代码位于 `wrongbook/`，不回写正式 JSON，不改变原静态诊断。错题服务使用独立 loopback8766、独立用户 token 和私有 `WRONGBOOK_WORKSPACE`，与导入工作区/鉴权分离；静态发布排除该后端目录。功能与运行方式见[错题本说明](../../wrongbook/README.md)。本次范围为开发、自验、终审和推送，不包含生产切流。

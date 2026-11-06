@@ -1,0 +1,25 @@
+[Unit]
+Description=cn-math private wrongbook API (loopback)
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/srv/cn-math-taxonomy/wrongbook-current
+Environment=WRONGBOOK_WORKSPACE=/srv/cn-math-taxonomy/wrongbook-workspace
+Environment=WRONGBOOK_STATIC_ROOTS=/srv/cn-math-taxonomy/current:/srv/cn-math-taxonomy/releases:/home/ubuntu/Projects/cn-math-taxonomy
+ExecStart=/usr/bin/python3 -m wrongbook.api --port 8766
+Restart=on-failure
+RestartSec=3
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/srv/cn-math-taxonomy/wrongbook-workspace
+MemoryMax=192M
+CPUQuota=50%
+
+[Install]
+WantedBy=multi-user.target
