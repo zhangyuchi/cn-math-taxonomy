@@ -206,7 +206,13 @@ timeout -k 5s 600s /usr/bin/python3 \
 
 与 fixture 的区别：fixture 返回固定测试文本；此适配器实际调用本地 MinerU。PDF paper 的后续结构解析由 worker 自动执行，不要求 OCR 生成英文键值字段，也不要求用户改写 MD：识别连续数字题号、中文大题标题、同行/分行 A–D 选项、中文答案/解析标签，以及卷末编号答案、Markdown/简单 HTML 答案表。子问与公式保留；依据选项及答案形态生成 `choice`、`numeric` 或 `short`，默认难度 `standard`，每题按上述规则自动挂到同学科现有知识点，评分和候选写报告供复核。已有英文键值 OCR 插件输出继续兼容。
 
-业务审核确认答案、难度和挂点后批准，不承担格式整理。原卷必须含明确答案；结构解析不猜测答案。无可识别题号、题号重复/不连续、答案冲突/错配、选项残缺等返回 `PAPER_STRUCTURE_FAILED`；缺答案返回 `PAPER_ANSWER_MISSING`；含未持久保存的图片引用返回 `PAPER_ASSET_MISSING`。PDF 遇到任一上述问题整卷失败，不用少量成功题替代完整试卷，不发布本轮部分草稿。诊断及原文写入 `reports/parse.json` 和 `source/normalized.md`，由运维修复识别/解析能力后重试原 PDF；无需用户整理 Markdown。当前不交付临时题图，依赖图片的卷不在自动成功范围。OCR 识别质量仍需与结构链路测试区分。
+业务审核确认答案、难度和挂点后批准，不承担切题格式整理。PDF 无可识别题号、题号重复/不连续、未知未归属内容、答案冲突/错配、选项残缺等仍返回 `PAPER_STRUCTURE_FAILED`，整卷失败并保留原文与诊断；不以部分题替代完整试卷。分节边界的已知作答/评分说明跳过并保存在 `reports/parse.json.structure.ignoredNotes`（行号/所属节/原文），正文同句保留。“第×部分”也视为分节标题；选择题上下文支持括号/LaTeX 标签，归一化原始顺序与文本保存在 `structure.choiceNormalizations`，仍须人工核对。
+
+**缺答案/缺图不阻断结构成功的 PDF 草稿。** 缺答案保留 `answer: ""`，不编造；`questionRisks` 按草稿 `id` 标记 `answerMissing`、`missingAssets`、已保存的 `assets` 及 `riskCodes`；卷级 `riskCodes` 汇总 `PAPER_ANSWER_MISSING`、`PAPER_ASSET_MISSING` 或 `PAPER_ASSET_REVIEW_REQUIRED`，报告与任务 flags 均要求人审。每题仍执行现有强制同学科最佳知识点挂接，状态为 `needs_review`，校验未通过也可复核。文本卷仍沿用缺答案块进入 `unparsed` 的契约。
+
+适配器和 worker 在各自临时目录清理前，优先搬运本地安全图片到私有 job 的 `source/assets/`，并规范化 Markdown 中的资产路径；同名页段不会相互覆盖。仅支持根内、无符号链接的 PNG/JPEG/GIF/WebP 普通文件，每张 ≤16 MiB、每轮累计 ≤64 MiB；缺失/超限/不支持引用保留风险，不抓取远程地址。图片保存在报告 `assets`，可通过已有认证的 `/import/v1/jobs/<jobId>/files/<asset路径>` 作为二进制下载供审。
+
+私有题图不自动发布。已保存图片为 `PAPER_ASSET_REVIEW_REQUIRED`，未找到为 `PAPER_ASSET_MISSING`；仍含图片引用的题干/答案/解析/选项在 apply 时重新检查并拒绝，须人工转写为完整文字等正式库支持的形式，补齐有依据的答案后保存修订并重新审核。空答案仍由原 validator 拦截，合法正式 `figure` SVG 沿用原校验。修订保留初始 `structure`、挂点与 `initialRisks`，当前风险重新计算。`needs_review`、批准、校验通过含义不同；正式题 schema 不增加风险字段。详见[可审草稿契约](../docs/superpowers/specs/2026-11-06-paper-reviewable-draft.md)。OCR 公式、表格及选项分割质量仍须对照原 PDF，不以结构成功代替准确率验收。
 
 自动化夹具 `tests/fixtures/paper-mineru.md` 是无英文结构字段的原创中文 OCR 结果；测试完整执行 HOME 适配器、worker 和真实结构解析，仅替代耗时引擎。其通过证明自动路径及字段，不代表任意真实扫描件的识别准确率。
 

@@ -8,6 +8,7 @@ import time
 from .apply import apply_job, recover_pending
 from .parsers import parse_textbook
 from .paper import parse_paper
+from .paper_assets import question_risks
 from .ocr import normalize_pdf
 from .verification import verify_questions
 from .transactions import assert_clean
@@ -49,6 +50,9 @@ def write_reports(service, job_id, draft, parse_details=None):
                  else len(value) for name, value in draft.items()},
                  warnings=['机器生成草稿，无教师背书；目录顺序和挂点建议均须审核'], unparsed=[])
     parse.update(parse_details or {})
+    if service.get(job_id)['type'] == 'paper':
+        parse.update(question_risks(service, job_id, draft['questions']))
+        parse.setdefault('initialRisks', parse['questionRisks'])
     atomic_json(directory / 'reports/parse.json', parse)
     verify = verify_questions(draft['questions'])
     atomic_json(directory / 'reports/verify.json', verify)

@@ -69,7 +69,7 @@ def parse_paper(service, meta, content, suffix=None, *, ocr=False):
 
     保留合法显式点，其余采用规则最高分，零分也兜底；跨科显式点仍拒绝。
     评分与候选仅写入初始解析报告，不污染正式题 schema。
-    文本缺答案/题干的块进入unparsed；PDF 自动切题且不发布残缺的部分卷。
+    文本缺答案/题干的块进入unparsed；PDF 缺答案留空供审，结构歧义仍失败。
     """
     try:
         text = content.decode('utf-8-sig')
@@ -98,7 +98,7 @@ def parse_paper(service, meta, content, suffix=None, *, ocr=False):
                 raise ValueError(row['_error'])
             if set(row) - FIELDS:
                 raise ValueError('未知试卷字段：' + ','.join(sorted(set(row)-FIELDS)))
-            if not row.get('prompt', '').strip() or not row.get('answer', '').strip():
+            if not row.get('prompt', '').strip() or (not ocr and not row.get('answer', '').strip()):
                 raise ValueError('缺少题干或答案')
             supplied = row.get('topicId', '').strip()
             if supplied and not supplied.startswith(meta['subjectPrefix'] + '_'):

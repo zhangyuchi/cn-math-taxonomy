@@ -5,6 +5,8 @@
 
 后续契约覆盖：本文记录交付时的 null 挂点路径；当前试卷挂点规则以[强制挂点设计](2026-11-06-forced-topic-match.md)为准，每题自动选择同学科最佳现有知识点，报告供复核可改。
 
+后续缺答案/题图契约及说明跳过规则以[可审草稿设计](2026-11-06-paper-reviewable-draft.md)为准；本文件的整卷拒绝规定仅保留结构歧义部分。
+
 ## 证据与边界
 
 开工时分支 `feat/import-module`，工作区干净。`store.py` 对所有源文件限制 1 MiB；`ocr.py` 复用此限制；`ocr_mineru.py` 另对单段与合并 Markdown 限制 1 MiB；`api.py` 限制请求 2 MiB；CLI 在校验前读取完整文件。`paper.py` 只接收英文键值的题目块或 CSV，扫描结果缺少这些键时返回 `EMPTY_PAPER`。`revision.py` 另对入站草稿修订限制 1 MiB。

@@ -140,6 +140,11 @@ def _apply_locked(service, meta):
                     and bool(draft['mappings']))
     if decision.get('actor') != 'ops' and not (decision.get('actor') == 'system:auto-mappings' and pure_mapping):
         raise ImportErrorResponse('REVIEW_REQUIRED', '新点/边/题必须经人工审批', 409)
+    from .paper_assets import question_risks
+    risks = question_risks(service, job_id, draft['questions'])
+    for code in ('PAPER_ASSET_MISSING', 'PAPER_ASSET_REVIEW_REQUIRED'):
+        if code in risks['riskCodes']:
+            raise ImportErrorResponse(code, '题目仍含图片引用；须人工转写为完整文字等正式库支持的形式后重新审核')
     # 兼容旧单文件intent，当前草稿已核准，未写入时允许重新验证后安全重试。
     intent_path = service.job_dir(job_id) / 'review/apply-intent.json'
     if intent_path.exists():

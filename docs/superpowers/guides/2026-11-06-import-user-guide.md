@@ -137,7 +137,15 @@ worker 自动完成 **HOME MinerU OCR → 结构解析 → `draft/questions.json
 
 题型按选项和答案形态生成 `choice`、`numeric` 或 `short`；未标难度时默认 `standard`，并在 `reports/parse.json.structure` 中注明。每题自动挂到同学科现有知识点，使用与文本卷相同的评分及兜底规则，证据写入 `reports/parse.json.matches`。审核台复核这些业务信息及批准，可改挂点，不承担题目格式整理或逐题补点。
 
-**原 PDF 必须包含明确答案，系统不编造缺失答案。** 无法切题、题号重复/不连续、答案错配或冲突、选项残缺时返回 `PAPER_STRUCTURE_FAILED`；缺少答案为 `PAPER_ANSWER_MISSING`；当前 OCR 协议不持久保存题图，发现图片引用为 `PAPER_ASSET_MISSING`。这些情况整卷失败，并保留 OCR 原文与结构诊断，不以部分成功题替代整卷。由运维根据报告修复引擎/解析能力后 `requeue` 原 PDF，无需用户改写 MD。含图试卷仍有资源支持边界；不要使用返回固定文本的 `ocr_fixture.py` 识别真实卷子。自动结构化测试不能证明所有扫描版式的 OCR 准确率。
+**原 PDF 缺答案或题图时仍可生成可审草稿，系统不编造答案。** 缺答案保留 `answer: ""`；`reports/parse.json.questionRisks` 按草稿 `id` 标记 `answerMissing`、`missingAssets`、已保存的 `assets` 及 `riskCodes`，卷级汇总为 `riskCodes` 和 `requiresHumanReview=true`；任务的 `flags.requiresHumanReview` 也为真。`PAPER_ANSWER_MISSING`、`PAPER_ASSET_MISSING` 是可审风险，不再让结构成功的试卷整卷零题。每题仍强制挂同学科最佳知识点；`needs_review` 不代表内容完整或校验通过。
+
+中文大题/“第×部分”标题之间的已知作答、评分说明会跳过切题并保存在 `structure.ignoredNotes`（行号、所属节、原文）；题干中的相同句子保留。选择题上下文支持括号、LaTeX 包裹的 A–D 标签；原始顺序与文本保存在 `structure.choiceNormalizations`，乱序标签归一后仍须逐项对照原卷。OCR 公式和表格不保证准确。无法切题、题号重复/不连续、未归属的未知内容、答案错配/冲突或选项残缺仍为 `PAPER_STRUCTURE_FAILED`，整卷失败并保留诊断；由运维修复后重试原 PDF，无需用户改写 MD。
+
+MinerU 题图优先从输出目录安全拷贝，随后在临时目录清理前持久到私有 job 的 `source/assets/`，草稿及 `source/normalized.md` 中相应图片路径会规范化。只接受根内、无符号链接的本地 PNG/JPEG/GIF/WebP 普通文件，每张 ≤16 MiB、每轮累计 ≤64 MiB；缺失、越界、远程地址或超限均不抓取、不伪造，保留缺图风险。已保存图片标记 `PAPER_ASSET_REVIEW_REQUIRED`，供本地鉴权下载核对：登录后访问 `/import/v1/jobs/<jobId>/files/<assets 中的路径>`，或用现有 Bearer 认证下载；原 PDF 也保留供复核。
+
+这些私有资源不自动发布到正式库。缺答案须在草稿中补充有依据的答案；含图片引用的题干、答案、解析或选项须先人工转写为完整文字等正式库支持的形式，再保存修订并重新审批。apply 重新检查当前草稿资源引用并运行原 validator，人工批准不能绕过缺答案/资源门闸；已有合法 `figure` SVG 仍由原 validator 校验。修订后当前风险重新计算，初始题号、说明、选项及 `initialRisks` 保留供追溯。
+
+不要使用返回固定文本的 `ocr_fixture.py` 识别真实卷子；结构测试不能证明所有扫描版式的 OCR 准确率。新降级契约及边界见[可审草稿设计](../specs/2026-11-06-paper-reviewable-draft.md)。
 
 ## 4. 教材目录：选择扩库或版本对照
 
@@ -307,8 +315,9 @@ tail -n 50 "$IMPORT_WORKSPACE/api.log" "$IMPORT_WORKSPACE/worker.log"
 | `OCR_CONFIG_INVALID` | OCR 命令 JSON argv 或超时配置无效；运维检查 worker 环境并在空闲时重启 |
 | `OCR_TIMEOUT` / `OCR_FAILED` / `OCR_OUTPUT_INVALID` | OCR 超时、启动/识别失败或输出非法（非普通非空 UTF-8 文件、超 64 MiB 等）；原 PDF 保留，运维检查环境、模型、日志及页数后重试 |
 | `PAPER_STRUCTURE_FAILED` | PDF 无法切题、题号重复/不连续、答案错配/冲突、选项不完整或版式不支持；保留完整结构诊断，交运维修复解析能力后重试原 PDF，无需改写 MD |
-| `PAPER_ANSWER_MISSING` | 原卷或 OCR 结果缺少某题明确答案；交运维核查原 PDF 与识别结果，不生成猜测答案 |
-| `PAPER_ASSET_MISSING` | OCR 含未持久保存的题图；当前不能生成完整可入库题目，交运维处理资源支持，不得批准残缺题 |
+| `PAPER_ANSWER_MISSING` | 可审风险：原卷/OCR 缺明确答案，草稿留空并须人审；补有依据的答案后重新审核，原 validator 仍阻止空答案 apply |
+| `PAPER_ASSET_MISSING` | 可审风险：引用图片缺失、非法或超限；仍生成草稿并须人审，apply 重新检查后拒绝残缺引用 |
+| `PAPER_ASSET_REVIEW_REQUIRED` | 可审风险：题图已保存到私有 job，须鉴权下载核对；私有图片不自动发布，仍含图片引用时 apply 拒绝 |
 | `EMPTY_PAPER` / `EMPTY_TOC` / `METADATA_CONFLICT` | 结构化文本没有可解析题目/目录，或元数据与参数冲突；核对第 3.1/4 节的文本契约。PDF 自动路径使用上述专用结构失败码 |
 | `NO_TOPIC_CANDIDATES` | 所选学科无可用现有知识点；先在私有工作副本恢复该学科合法知识点后重试，不得改用其他学科兜底 |
 | `TOPIC_ID_REQUIRED` | 修订误删题目挂点、历史草稿仍为 null，或版本对照缺显式 ID；修复草稿或补齐对照输入。历史待审任务可先驳回再 requeue，重新自动挂点 |

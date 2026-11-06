@@ -69,7 +69,7 @@ def revise(service, job_id, draft, expected_digest, comment=''):
             directory = service.job_dir(job_id)
             # 改挂后保留初始机器评分；matchesScope 避免把旧评分解释为修订后挂点的依据。
             parsed = read_json(directory / 'reports/parse.json')
-            details = {key: parsed[key] for key in ('matches', 'matchesScope') if key in parsed}
+            details = {key: parsed[key] for key in ('matches', 'matchesScope', 'structure', 'initialRisks') if key in parsed}
             if 'matches' in details:
                 details['matchesScope'] = 'initial_parse'
             details.update(revision=True, unparsed=[])

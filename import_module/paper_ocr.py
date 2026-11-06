@@ -1,4 +1,4 @@
-"""从普通 OCR Markdown 自动切题、对齐原卷答案；歧义时整卷失败。"""
+"""从 OCR 自动切题；结构歧义失败，缺答案和题图交给草稿风险报告。"""
 from fractions import Fraction
 from html.parser import HTMLParser
 import json
@@ -8,6 +8,13 @@ from .store import ImportErrorResponse
 
 QUESTION = re.compile(r'^(?:Q\s*)?(\d+)\s*(?:\.(?!\d)|[．、:：)）])\s*(.*)$', re.I)
 SECTION = re.compile(r'^[一二三四五六七八九十百]+[、.．]\s*.+$')
+PART = re.compile(r'^第\s*[一二三四五六七八九十百\d]+\s*部分\s*.*$')
+RUBRIC_NUMBER = r'[\d一二三四五六七八九十百两]+'
+RUBRIC = re.compile(r'^(?:解答应写出文字说明[、，,]演算步骤或证明过程|'
+                    r'本(?:大题|卷|试卷)共\s*' + RUBRIC_NUMBER + r'\s*(?:分|页|道?题)'
+                    r'(?:[，,、；;]\s*(?:(?:共|满分)\s*' + RUBRIC_NUMBER + r'\s*(?:分|页|道?题)|'
+                    r'每(?:小)?题\s*' + RUBRIC_NUMBER + r'\s*分))*|'
+                    r'每(?:小)?题\s*' + RUBRIC_NUMBER + r'\s*分)[。．.]?$')
 ANSWER_HEADING = re.compile(r'^(?:参考答案(?:及解析|与解析)?|答案及解析|答案与解析|答案解析|参考解答|答案)\s*[:：]?\s*$')
 LABEL = re.compile(r'【\s*(答案|参考答案|解析|分析|详解|解答|难度|题型)\s*】\s*[:：]?|'
                    r'(?:^|\n)\s*(答案|参考答案|解析|分析|详解|解答|难度|题型|'
@@ -17,7 +24,9 @@ KEYS = {'答案': 'answer', '参考答案': 'answer', '解答': 'answer', '解�
 KEYS.update({key: key for key in ('prompt', 'answer', 'explanation', 'type', 'difficulty', 'topicId',
                                  'choices', 'verify', 'unordered')})
 OPTION = re.compile(r'(?:^|\s)([A-DＡ-Ｄ])\s*[.．、:：)）]\s*')
-ASSET = re.compile(r'!\[[^\]]*\]\s*\(|<\s*(?:img|svg)\b', re.I)
+BRACKET_OPTION = re.compile(r'(?:\\left\s*)?[(（]\s*'
+                            r'(?:(?:\\(?:mathbf|mathrm|text|mathit))\s*\{\s*)?'
+                            r'([A-DＡ-Ｄ])\s*\$?\s*(?:\}\s*)?(?:\\right\s*)?[)）]\s*')
 NUMBER = re.compile(r'-?\d+(?:\.\d+)?(?:/\d+(?:\.\d+)?)?(?:\s*[,，]\s*-?\d+(?:\.\d+)?(?:/\d+(?:\.\d+)?)?)*')
 
 
@@ -191,25 +200,29 @@ def _answer_rows(lines):
 
 
 def structure_paper(text):
-    """自动形成现有 paper 字段行；任何已识别题不完整则整卷失败。
+    """结构完整时形成草稿字段行；内容缺失留空，结构歧义整卷失败。
 
     原卷答案只按唯一印刷题号对齐，不猜测缺失答案或重复分节编号的归属。
-    图片在当前 OCR 协议中没有持久资源，须失败而非写入失效链接。
+    已知说明仅在分节标题后的边界跳过，正文同句保留；原文和归一化留证。
     """
     blocks, answer_lines, preamble, unassigned = [], [], [], []
+    ignored_notes, normalizations = [], []
     current, section, answers_started = None, '', False
-    for raw in text.splitlines():
+    for line_number, raw in enumerate(text.splitlines(), 1):
         line = _line(raw)
         if re.fullmatch(r'第\s*\d+\s*页(?:\s*[/，,共]\s*\d+\s*页)?', line):
             continue
         if ANSWER_HEADING.fullmatch(line):
             answers_started, current = True, None
             continue
-        if SECTION.fullmatch(line):
+        if SECTION.fullmatch(line) or PART.fullmatch(line):
             section, current = line, None
             continue
         if answers_started:
             answer_lines.append(line)
+            continue
+        if current is None and section and RUBRIC.fullmatch(line):
+            ignored_notes.append(dict(line=line_number, section=section, text=line, source=raw))
             continue
         heading = _question(line)
         if heading:
@@ -220,11 +233,10 @@ def structure_paper(text):
         elif line:
             (unassigned if blocks else preamble).append(line)
     structure = dict(method='ocr-numbered-v1', questionNumbers=[b['number'] for b in blocks],
-                     defaultDifficulty='standard', preamble=preamble)
+                     defaultDifficulty='standard', preamble=preamble, ignoredNotes=ignored_notes,
+                     choiceNormalizations=normalizations)
     if unassigned:
         _fail('PAPER_STRUCTURE_FAILED', '首题之后存在未归属题块，不能当作卷首说明丢弃', structure, unassigned)
-    if ASSET.search(text):
-        _fail('PAPER_ASSET_MISSING', 'OCR 文本包含未持久保存的题图，不能生成完整题目', structure, text)
     if not blocks:
         _fail('PAPER_STRUCTURE_FAILED', 'OCR 文本没有可识别的题号', structure, text)
     numbers = structure['questionNumbers']
@@ -244,16 +256,32 @@ def structure_paper(text):
                 if row.get(key) and row[key] != value:
                     raise ValueError('正文与卷末字段冲突：' + key)
                 row[key] = value
-            if not row.get('answer', '').strip():
-                _fail('PAPER_ANSWER_MISSING', '原卷缺少题号 ' + block['number'] + ' 的明确答案', structure, block)
+            row['answer'] = row.get('answer', '').strip()
             prompt = row.get('prompt', '')
             options = list(OPTION.finditer(prompt))
+            choice_context = (('选择题' in block['section'] and '非选择题' not in block['section']) or
+                              row.get('type') in ('choice', '选择题'))
+            brackets = list(BRACKET_OPTION.finditer(prompt)) if choice_context else []
+            if brackets:
+                # 完整旧式标签优先，选项正文中的点(A)不能抢占 A. 等标签。
+                dotted = [m for m in options if not any(b.start() <= m.start(1) < b.end() for b in brackets)]
+                if dotted:
+                    if {b[1] for b in brackets} - {m[1] for m in dotted}:
+                        raise ValueError('选项混用标签格式，不能确定完整归属')
+                    options, brackets = dotted, []
+                else:
+                    options = brackets
             explicit_choices = _checked_choices(row['choices']) if 'choices' in row else None
             if options:
                 row['prompt'] = prompt[:options[0].start()].strip()
                 extracted = [dict(key=chr(ord(m[1]) - 0xFEE0) if ord(m[1]) > 127 else m[1],
                                        text=prompt[m.end():options[i+1].start() if i+1 < len(options) else len(prompt)].strip())
                                   for i, m in enumerate(options)]
+                if brackets:
+                    normalizations.append(dict(number=block['number'], source=prompt,
+                                               originalOrder=[c['key'] for c in extracted],
+                                               requiresHumanReview=True))
+                    extracted.sort(key=lambda c: c['key'])
                 row['choices'] = _checked_choices(extracted)
                 if explicit_choices is not None and explicit_choices != row['choices']:
                     raise ValueError('正文选项与显式 choices 冲突')
@@ -264,10 +292,10 @@ def structure_paper(text):
                 answer = row['answer'].strip().strip('$').strip().upper()
                 if len(answer) == 1 and 'Ａ' <= answer <= 'Ｄ':
                     answer = chr(ord(answer) - 0xFEE0)
-                if answer not in keys:
+                if answer and answer not in keys:
                     raise ValueError('选择题答案不是单一有效选项')
                 row['answer'], row['type'] = answer, 'choice'
-            elif '选择' in block['section'] or row.get('type') in ('choice', '选择题'):
+            elif choice_context:
                 raise ValueError('选择题未识别到选项')
             else:
                 row['type'] = row.get('type') or ('numeric' if NUMBER.fullmatch(row['answer']) else 'short')

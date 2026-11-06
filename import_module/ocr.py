@@ -4,11 +4,13 @@ import os
 from pathlib import Path
 import re
 import signal
+import shutil
 import subprocess
 import tempfile
 
 from .store import ImportErrorResponse, atomic_bytes, atomic_json, digest_bytes
 from .limits import MAX_OCR_BYTES, MIB
+from .paper_assets import copy_assets
 
 
 def _pages(value, required):
@@ -40,6 +42,12 @@ def normalize_pdf(service, meta):
     directory = service.job_dir(meta['jobId'])
     normalized = directory / 'source/normalized.md'
     normalized.unlink(missing_ok=True)
+    assets = directory / 'source/assets'
+    # 重试不能把上一轮资源当作本轮 OCR 成功；只清理本模块拥有的目录。
+    if assets.is_symlink():
+        assets.unlink()
+    elif assets.exists():
+        shutil.rmtree(assets)
     configured = os.environ.get('IMPORT_OCR_COMMAND')
     if not configured:
         raise ImportErrorResponse('OCR_REQUIRED', '未启用OCR插件；请提供目录/试卷文本或配置IMPORT_OCR_COMMAND')
@@ -85,6 +93,8 @@ def normalize_pdf(service, meta):
                     raise ValueError('空文本或NUL')
             except (UnicodeError, ValueError) as exc:
                 raise ImportErrorResponse('OCR_OUTPUT_INVALID', '插件输出不是有效UTF8文本') from exc
+            text, copied, _ = copy_assets(text, output.parent, assets, 'source/assets')
+            report['assets'] = copied
             atomic_bytes(normalized, text.encode())
             report.update(ok=True, outputSha256=digest_bytes(text.encode()), confidence='unreviewed')
             return text.encode()

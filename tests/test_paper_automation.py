@@ -13,6 +13,7 @@ import test_import_module as base
 from import_module.store import ImportErrorResponse
 from import_module.api import make_server
 from import_module.worker import run_once
+from import_module.apply import apply_job
 
 ROOT = base.ROOT
 SCAN = (ROOT / 'tests/fixtures/paper-mineru.md').read_text()
@@ -121,12 +122,9 @@ answer: B
 
     def test_bad_scan_never_publishes_partial_draft_and_preserves_diagnostics(self):
         cases = [
-            ('1. 计算1+1\n', 'PAPER_ANSWER_MISSING'),
-            ('1. 计算1+1\n【答案】2\n2. 计算2+2\n', 'PAPER_ANSWER_MISSING'),
             ('1. 题干\n【答案】2\n# 二、填空题\n1. 另一题\n【答案】3', 'PAPER_STRUCTURE_FAILED'),
             ('1. 题干\n【答案】2\n# 参考答案\n1. 3', 'PAPER_STRUCTURE_FAILED'),
             ('1. 题干\n【答案】2\n# 参考答案\n2. 3', 'PAPER_STRUCTURE_FAILED'),
-            ('1. 看图\n![](images/a.jpg)\n【答案】2', 'PAPER_ASSET_MISSING'),
             ('1. 选择题\nA. 1 B. 2\n【答案】D', 'PAPER_STRUCTURE_FAILED'),
             ('1. 选择题\nA. 1 B. 2\n【答案】B', 'PAPER_STRUCTURE_FAILED'),
             ('1. 题\n【答案】1\n3. 题\n【答案】3', 'PAPER_STRUCTURE_FAILED'),
@@ -150,6 +148,124 @@ answer: B
                 self.assertTrue(result['reports']['parse']['unparsed'])
                 self.assertIn('structure', result['reports']['parse'])
 
+    def test_section_rubric_after_q1_is_audited_and_not_a_question(self):
+        note = '解答应写出文字说明、演算步骤或证明过程.'
+        result = self.scan('1. 第一题\n【答案】2\n# 第二部分 非选择题\n'
+                           '# 二、解答题\n' + note + '\n本大题共20分，每小题10分。\n'
+                           '2. ' + note + '\n请计算2+2。\n【答案】4')
+        self.assertEqual(result['status'], 'needs_review', result['error'])
+        self.assertEqual(len(result['draft']['questions']), 2)
+        self.assertIn(note, result['draft']['questions'][1]['prompt'])
+        notes = result['reports']['parse']['structure']['ignoredNotes']
+        self.assertEqual([n['text'] for n in notes], [note, '本大题共20分，每小题10分。'])
+        self.assertEqual(notes[0]['line'], 5)
+        self.assertEqual(notes[0]['section'], '二、解答题')
+        unknown = self.scan('1. 第一题\n【答案】2\n二、解答题\n未知未归属内容\n2. 第二题\n【答案】4')
+        self.assertEqual(unknown['error']['code'], 'PAPER_STRUCTURE_FAILED')
+
+    def test_scoring_note_prefix_does_not_discard_unassigned_math(self):
+        result = self.scan('1. 第一题\n【答案】2\n二、解答题\n'
+                           '本大题共2个未知数，求它们的和。\n2. 第二题\n【答案】4')
+        self.assertEqual(result['status'], 'failed')
+        self.assertEqual(result['error']['code'], 'PAPER_STRUCTURE_FAILED')
+
+    def test_mixed_option_labels_are_not_silently_truncated(self):
+        result = self.scan('一、选择题\n1. 选择\nA. 1 B. 2 C. 3 (D)4\n【答案】A')
+        self.assertEqual(result['status'], 'failed')
+        self.assertEqual(result['error']['code'], 'PAPER_STRUCTURE_FAILED')
+
+    def test_incomplete_content_is_reviewable_with_current_risks_and_topics(self):
+        for text, answers, codes in [
+            ('1. 计算1+1\n2. 计算2+2\n【答案】4', ['', '4'], {'PAPER_ANSWER_MISSING'}),
+            ('1. 看图\n![](images/a.jpg)\n【答案】2', ['2'], {'PAPER_ASSET_MISSING'}),
+            ('1. 看图\n![](images/a.jpg)', [''], {'PAPER_ANSWER_MISSING', 'PAPER_ASSET_MISSING'}),
+        ]:
+            with self.subTest(text=text):
+                result = self.scan(text)
+                self.assertEqual(result['status'], 'needs_review', result['error'])
+                self.assertTrue(result['flags']['requiresHumanReview'])
+                qs, report = result['draft']['questions'], result['reports']['parse']
+                self.assertEqual([q['answer'] for q in qs], answers)
+                self.assertTrue(all(q['topicId'].startswith('cnm_') for q in qs))
+                self.assertEqual(set(report['riskCodes']), codes)
+                self.assertTrue(report['requiresHumanReview'])
+                self.assertEqual(report['questionRisks'][0]['id'], qs[0]['id'])
+                self.assertEqual(report['questionRisks'][0]['answerMissing'], not answers[0])
+                self.assertEqual(report['unparsed'], [])
+                self.service.approve(result['jobId'])
+                with self.assertRaises(ImportErrorResponse):
+                    apply_job(self.service, result['jobId'])
+                self.assertEqual(self.formal_hashes(), self.baseline)
+
+    def test_revision_recomputes_risks_and_preserves_initial_structure(self):
+        result = self.scan('1. 看图\n![](images/a.jpg)')
+        self.assertEqual(result['status'], 'needs_review', result['error'])
+        draft = result['draft']
+        draft['questions'][0].update(prompt='计算1+1。', answer='2')
+        self.service.revise(result['jobId'], draft, result['draftSha256'])
+        revised = self.service.snapshot(result['jobId'])
+        report = revised['reports']['parse']
+        self.assertEqual(report['riskCodes'], [])
+        self.assertEqual(report['questionRisks'], [])
+        self.assertEqual(report['structure']['questionNumbers'], ['1'])
+        self.assertTrue(report['initialRisks'])
+        self.assertTrue(revised['reports']['validate']['ok'])
+        self.service.approve(result['jobId'])
+        apply_job(self.service, result['jobId'])
+        self.assertEqual(self.service.get(result['jobId'])['status'], 'applied')
+
+    def test_parenthesized_latex_options_are_normalized_with_evidence(self):
+        result = self.scan(r'''# 一、选择题
+1. 选择正数
+$\left( \mathbf { A } \right) -1$ $\mathrm { ( B ) 2 }$ (D）-3 (C)0
+# 第二部分 非选择题
+2. 矩阵(A)与(B)的关系。
+''')
+        self.assertEqual(result['status'], 'needs_review', result['error'])
+        qs = result['draft']['questions']
+        self.assertEqual([c['key'] for c in qs[0]['choices']], list('ABCD'))
+        self.assertNotIn('第二部分', qs[0]['choices'][-1]['text'])
+        self.assertIn('(A)', qs[1]['prompt'])
+        self.assertNotIn('choices', qs[1])
+        evidence = result['reports']['parse']['structure']['choiceNormalizations'][0]
+        self.assertEqual(evidence['originalOrder'], list('ABDC'))
+        self.assertTrue(evidence['requiresHumanReview'])
+        self.assertIn('\\mathbf', evidence['source'])
+        for options in ['(A)1 (A)2 (C)3', '(A)1 (B)2', '(A) (B)2 (C)3', '(A)1 (B)2 (D)3']:
+            bad = self.scan('一、选择题\n1. 选择\n' + options)
+            self.assertEqual(bad['error']['code'], 'PAPER_STRUCTURE_FAILED')
+
+    def test_parentheses_inside_complete_dotted_options_do_not_replace_labels(self):
+        result = self.scan('一、选择题\n1. 选择正数\nA. 点(A)的数为-1\nB. 2\nC. 0\nD. -2\n【答案】B')
+        self.assertEqual(result['status'], 'needs_review', result['error'])
+        choices = result['draft']['questions'][0]['choices']
+        self.assertEqual([c['key'] for c in choices], list('ABCD'))
+        self.assertEqual(choices[0]['text'], '点(A)的数为-1')
+        self.assertEqual(result['reports']['parse']['structure']['choiceNormalizations'], [])
+
+    def test_unsupported_reference_image_cannot_bypass_asset_gate(self):
+        for image in ['![图][missing]\n[missing]: images/a.png', '![图][]', '![图]']:
+            result = self.scan('1. 看图\n' + image + '\n【答案】2')
+            self.assertEqual(result['status'], 'needs_review', result['error'])
+            self.assertIn('PAPER_ASSET_MISSING', result['reports']['parse']['riskCodes'])
+            self.service.approve(result['jobId'])
+            self.assert_code('PAPER_ASSET_MISSING', lambda: apply_job(self.service, result['jobId']))
+
+    def test_asset_apply_gate_checks_current_fields_without_trusting_reports(self):
+        for field in ('prompt', 'answer', 'explanation', 'choices'):
+            with self.subTest(field=field):
+                result = self.scan('1. 计算1+1\n【答案】2')
+                draft = result['draft']
+                if field == 'choices':
+                    draft['questions'][0].update(type='choice', answer='A', choices=[
+                        {'key': key, 'text': '![](x.png)' if key == 'A' else key} for key in 'ABC'])
+                else:
+                    draft['questions'][0][field] = '![](x.png)'
+                self.service.revise(result['jobId'], draft, result['draftSha256'])
+                self.service.approve(result['jobId'])
+                self.assert_code('PAPER_ASSET_MISSING', lambda: apply_job(self.service, result['jobId']))
+                self.assertEqual(self.formal_hashes(), self.baseline)
+
 
 class LargeUploadTests(base.WorkspaceCase):
     def setUp(self):
@@ -159,6 +275,34 @@ class LargeUploadTests(base.WorkspaceCase):
         self.addCleanup(self.server.server_close)
         self.addCleanup(self.server.shutdown)
         self.url = 'http://127.0.0.1:' + str(self.server.server_port)
+
+    def test_private_asset_download_is_authenticated_bounded_and_not_text(self):
+        job = self.service.create_job('paper', 'exam.pdf', b'%PDF-test', {'subjectPrefix': 'cnm'})['jobId']
+        assets = self.service.job_dir(job) / 'source/assets'
+        assets.mkdir()
+        payload = b'\x89PNG\r\n\x1a\nfixture'
+        (assets / 'a.png').write_bytes(payload)
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        url = self.url + '/import/v1/jobs/' + job + '/files/source/assets/a.png'
+        with self.assertRaises(urllib.error.HTTPError) as caught:
+            opener.open(url, timeout=5)
+        self.assertEqual(caught.exception.code, 401)
+        caught.exception.close()
+        request = urllib.request.Request(url, headers={'Authorization': 'Bearer test-import-token'})
+        with opener.open(request, timeout=5) as response:
+            self.assertEqual(response.headers['Content-Type'], 'application/octet-stream')
+            self.assertEqual(response.read(), payload)
+        (assets / 'a.png').unlink()
+        (assets / 'a.png').symlink_to(self.service.data / 'questions.json')
+        with self.assertRaises(urllib.error.HTTPError) as caught:
+            opener.open(request, timeout=5)
+        self.assertEqual(caught.exception.code, 400)
+        caught.exception.close()
+        (assets / 'a.png').unlink()
+        with self.assertRaises(urllib.error.HTTPError) as caught:
+            opener.open(request, timeout=5)
+        self.assertEqual(caught.exception.code, 404)
+        caught.exception.close()
 
     def test_source_type_boundaries(self):
         for filename, limit in [('exam.txt', 16 * 1024 * 1024), ('exam.pdf', 64 * 1024 * 1024)]:

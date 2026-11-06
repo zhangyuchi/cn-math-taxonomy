@@ -100,6 +100,126 @@ class MinerUAdapterTests(unittest.TestCase):
         self.assertNotIn('-s', self.calls()[0])
         self.assertNotIn('-e', self.calls()[0])
 
+    def test_images_survive_both_temporary_directories_and_are_reviewable(self):
+        from import_module.worker import run_once
+        from import_module.apply import apply_job
+        payload = b'\x89PNG\r\n\x1a\nimage-fixture'
+        self.exe.write_text('#!' + sys.executable + '\n' + FAKE + '''
+(path.parent / 'images').mkdir()
+(path.parent / 'images/a.png').write_bytes(''' + repr(payload) + ''')
+path.write_text('1. 看图\\n![](images/a.png)\\n【答案】2')
+''')
+        service = self.service()
+        meta = service.create_job('paper', 'scan.pdf', b'%PDF-test', dict(subjectPrefix='cnm'))
+        with mock.patch.dict(os.environ, dict(self.env, IMPORT_OCR_COMMAND=json.dumps([sys.executable, str(ADAPTER)]))):
+            run_once(service)
+        result = service.snapshot(meta['jobId'])
+        self.assertEqual(result['status'], 'needs_review', result['error'])
+        report = result['reports']['parse']
+        self.assertEqual(report['riskCodes'], ['PAPER_ASSET_REVIEW_REQUIRED'])
+        risk = report['questionRisks'][0]
+        self.assertEqual(risk['missingAssets'], [])
+        asset = risk['assets'][0]
+        self.assertTrue(asset.startswith('source/assets/'))
+        self.assertEqual(service.read_file(meta['jobId'], asset), payload)
+        self.assertIn(asset, result['draft']['questions'][0]['prompt'])
+        self.assertFalse(list(service.job_dir(meta['jobId']).glob('_ocr-*')))
+        service.approve(meta['jobId'])
+        with self.assertRaises(ImportErrorResponse) as caught:
+            apply_job(service, meta['jobId'])
+        self.assertEqual(caught.exception.code, 'PAPER_ASSET_REVIEW_REQUIRED')
+
+    def test_disjoint_page_images_do_not_overwrite_same_name(self):
+        self.exe.write_text('#!' + sys.executable + '\n' + FAKE + '''
+(path.parent / 'images').mkdir()
+(path.parent / 'images/a.png').write_bytes(args[args.index('-s') + 1].encode())
+path.write_text('![](images/a.png)')
+''')
+        result = self.invoke('1,3')
+        self.assertEqual(result.returncode, 0, result.stderr.decode())
+        import re
+        references = re.findall(r'!\[\]\(([^)]+)\)', self.output.read_text())
+        self.assertEqual(len(set(references)), 2)
+        self.assertEqual([(self.output.parent / ref).read_bytes() for ref in references], [b'0', b'2'])
+
+    def test_unsafe_or_missing_images_are_risks_without_ocr_failure(self):
+        from import_module.worker import run_once
+        self.exe.write_text('#!' + sys.executable + '\n' + FAKE + '''
+(path.parent / 'images').mkdir()
+(path.parent / 'images/leak.png').symlink_to(home / 'argv.jsonl')
+(path.parent / 'images/dir').symlink_to(home, target_is_directory=True)
+with (path.parent / 'images/large.png').open('wb') as f:
+    f.truncate(16 * 1024 * 1024 + 1)
+path.write_text('1. 看图\\n![](images/leak.png)\\n![](images/dir/argv.jsonl)\\n'
+                '![](../../outside.png)\\n![](https://example.invalid/a.png)\\n'
+                '![](images/missing.png)\\n![](images/large.png)\\n【答案】2')
+''')
+        service = self.service()
+        meta = service.create_job('paper', 'scan.pdf', b'%PDF-test', dict(subjectPrefix='cnm'))
+        with mock.patch.dict(os.environ, dict(self.env, IMPORT_OCR_COMMAND=json.dumps([sys.executable, str(ADAPTER)]))):
+            run_once(service)
+        result = service.snapshot(meta['jobId'])
+        self.assertEqual(result['status'], 'needs_review', result['error'])
+        self.assertEqual(result['reports']['parse']['riskCodes'], ['PAPER_ASSET_MISSING'])
+        risk = result['reports']['parse']['questionRisks'][0]
+        self.assertEqual(len(risk['missingAssets']), 6)
+        self.assertEqual(risk['assets'], [])
+
+    def test_asset_budget_and_retry_cannot_reuse_old_images(self):
+        from import_module.paper_assets import copy_assets
+        image = self.home / 'a.png'
+        image.write_bytes(b'image')
+        text = '![](a.png) ![](missing.png)'
+        rewritten, copied, used = copy_assets(text, self.home, self.home / 'assets', 'assets', max_bytes=4)
+        self.assertEqual((rewritten, copied, used), (text, [], 0))
+        image2 = self.home / 'b.png'
+        image2.write_bytes(b'other')
+        rewritten, copied, used = copy_assets('![](a.png) ![](b.png)', self.home,
+                                             self.home / 'assets', 'assets', max_bytes=5)
+        self.assertEqual(len(copied), 1)
+        self.assertEqual(used, 5)
+        self.assertIn('![](b.png)', rewritten)
+        service = self.service()
+        meta = service.create_job('paper', 'scan.pdf', b'%PDF-test', dict(subjectPrefix='cnm'))
+        old = service.job_dir(meta['jobId']) / 'source/assets'
+        old.mkdir()
+        (old / 'stale.png').write_bytes(b'stale')
+        self.exe.write_text('#!' + sys.executable + '\n' + FAKE + "\npath.write_text('1. 看图\\n![](source/assets/stale.png)')\n")
+        with mock.patch.dict(os.environ, dict(self.env, IMPORT_OCR_COMMAND=json.dumps([sys.executable, str(ADAPTER)]))):
+            text = normalize_pdf(service, meta)
+        self.assertFalse((old / 'stale.png').exists())
+        self.assertIn(b'source/assets/stale.png', text)
+
+    def test_asset_path_expansion_respects_ocr_text_budget(self):
+        from import_module.paper_assets import copy_assets
+        (self.home / 'a.png').write_bytes(b'image')
+        text = '![](a.png) ' * 2
+        with mock.patch('import_module.paper_assets.MAX_OCR_BYTES', 30, create=True):
+            rewritten, copied, used = copy_assets(text, self.home, self.home / 'assets', 'assets')
+        self.assertEqual((rewritten, copied, used), (text, [], 0))
+        self.assertFalse((self.home / 'assets').exists())
+
+    def test_disjoint_pages_share_one_path_expansion_budget(self):
+        import importlib.util
+        self.exe.write_text('#!' + sys.executable + '\n' + FAKE + '''
+(path.parent / 'images').mkdir()
+(path.parent / 'images/a.png').write_bytes(b'image')
+path.write_text('![](images/a.png)')
+''')
+        spec = importlib.util.spec_from_file_location('mineru_adapter', ADAPTER)
+        adapter = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(adapter)
+        with mock.patch.dict(os.environ, self.env), mock.patch.object(adapter, 'MAX_OCR_BYTES', 140), \
+                mock.patch('import_module.paper_assets.MAX_OCR_BYTES', 140):
+            try:
+                adapter.convert(self.input, self.output, 'textbook', '1,3')
+            except ValueError as exc:
+                self.fail('图片路径改写不得使原始合规的多页文本失败：' + str(exc))
+        text = self.output.read_text()
+        self.assertLessEqual(len(text.encode()), 140)
+        self.assertEqual(text.count('![](images/a.png)'), 1)
+        self.assertEqual(len(list(self.home.glob('result-assets/*/*.png'))), 1)
+
     def test_invalid_pages_never_start_mineru(self):
         for pages, kind in [('', 'textbook'), ('0', 'paper'), ('3-1', 'paper'),
                             ('1-11', 'textbook'), ('1,3,5,7,9,11,13,15,17,19,21', 'paper'),

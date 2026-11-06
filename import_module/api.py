@@ -179,7 +179,19 @@ def make_server(service, token, port=8765, secure_cookie=False):
                     self.send_json(200, service.diff(job_id))
                     return
                 if action.startswith('files/'):
-                    self.send_content(200, service.read_file(job_id, action[6:]), 'text/plain; charset=utf-8')
+                    relative = action[6:]
+                    if relative.startswith('source/assets/'):
+                        from .paper_assets import MAX_ASSET_BYTES, local_image
+                        try:
+                            local_image(service.job_dir(job_id), relative)
+                        except FileNotFoundError as exc:
+                            raise ImportErrorResponse('NOT_FOUND', '文件不存在', 404) from exc
+                        content = service.read_file(job_id, relative, limit=MAX_ASSET_BYTES)
+                        if len(content) > MAX_ASSET_BYTES:
+                            raise ImportErrorResponse('INVALID_PATH', '图片超过16MiB', 400)
+                        self.send_content(200, content, 'application/octet-stream')
+                    else:
+                        self.send_content(200, service.read_file(job_id, relative), 'text/plain; charset=utf-8')
                     return
             if method == 'POST':
                 if self.headers.get_content_type() != 'application/json':
