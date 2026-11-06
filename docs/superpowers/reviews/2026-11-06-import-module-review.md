@@ -1,5 +1,7 @@
 # 导入模块审核与验收记录
 
+> 本文保留上一轮骨架的历史范围与结果。本轮完整v1/OCR/生产切流见[完整计划](../plans/2026-11-06-import-module-completion.md)和[完整验收](../reviews/2026-11-06-import-module-completion-review.md)。
+
 日期：2026-11-06（Asia/Shanghai）。范围：任务简报授权的 **v1 骨架 + 教材 TOC 文本链路**。
 不将本记录视为完整 v1 或线上部署验收。
 

@@ -128,19 +128,19 @@ class ImportAcceptance(WorkspaceCase):
         self.assertFalse((self.workspace / 'data/mappings/importdemo_math.json').exists())
         self.assertEqual(self.formal_hashes(), self.baseline)
 
-    def test_new_topic_and_question_require_human_and_supported_scope(self):
+    def test_new_topic_and_question_require_human_and_validation(self):
         job = self.expand()
         run_once(self.service)
         self.assert_code('REVIEW_REQUIRED', lambda: apply_job(self.service, job))
         self.service.approve(job)
-        self.assert_code('APPLY_SCOPE_UNSUPPORTED', lambda: apply_job(self.service, job))
+        self.assert_code('VALIDATION_FAILED', lambda: apply_job(self.service, job))
         mixed = self.mapping(False)
         run_once(self.service)
         atomic_json(self.service.job_dir(mixed) / 'draft/questions.json', [{'id': 'cnm_001_q999'}])
         self.assert_code('REVIEW_REQUIRED', lambda: self.service.approve(mixed, automatic=True))
         self.assert_code('REVIEW_REQUIRED', lambda: apply_job(self.service, mixed))
         self.service.approve(mixed)
-        self.assert_code('APPLY_SCOPE_UNSUPPORTED', lambda: apply_job(self.service, mixed))
+        self.assert_code('INVALID_DRAFT', lambda: apply_job(self.service, mixed))
         self.assertEqual(self.formal_hashes(), self.baseline)
 
     def test_approval_is_bound_to_draft(self):
@@ -295,7 +295,7 @@ class ImportAcceptance(WorkspaceCase):
 
     def test_pdf_and_paper_fail_closed_and_preserve_source(self):
         for filename, content, kind, code in [('toc.pdf', b'%PDF-demo', 'textbook', 'OCR_REQUIRED'),
-                                               ('exam.md', b'## Q1\nprompt: 1+1', 'paper', 'PIPELINE_NOT_IMPLEMENTED')]:
+                                               ('exam.md', b'## Q1\nprompt: 1+1', 'paper', 'EMPTY_PAPER')]:
             meta = self.service.create_job(kind, filename, content,
                                            dict(mode='expand', subjectPrefix='cnm'))
             run_once(self.service)
@@ -393,7 +393,7 @@ class HTTPAcceptance(WorkspaceCase):
             browser.open(bad)
         self.assertEqual(caught.exception.code, 403)
         caught.exception.close()
-        good = urllib.request.Request(approve, data=b'{}', headers={'Content-Type': 'application/json',
+        good = urllib.request.Request(approve, data=json.dumps({'expectedDraftSha256': self.service.draft_digest(job)}).encode(), headers={'Content-Type': 'application/json',
                                        'Origin': self.url, 'X-Import-Review': '1'})
         with browser.open(good) as response:
             self.assertEqual(json.load(response)['status'], 'approved')
@@ -406,6 +406,31 @@ class HTTPAcceptance(WorkspaceCase):
         with browser.open(reject) as response:
             self.assertEqual(json.load(response)['status'], 'rejected')
 
+    def test_http_snapshot_revision_and_stale_approval(self):
+        job = self.mapping(False)
+        run_once(self.service)
+        headers = {'Authorization': 'Bearer test-import-token', 'Content-Type': 'application/json'}
+        endpoint = self.url + '/import/v1/jobs/' + job
+        with self.opener.open(urllib.request.Request(endpoint, headers=headers)) as response:
+            snapshot = json.load(response)
+        self.assertEqual(snapshot['draftSha256'], self.service.draft_digest(job))
+        self.assertIn('diff', snapshot)
+        draft = snapshot['draft']
+        draft['mappings']['entries'][0]['chapter'] = '审核修订章节'
+        body = json.dumps({'draft': draft, 'expectedDraftSha256': snapshot['draftSha256'], 'comment': '校对'}).encode()
+        with self.opener.open(urllib.request.Request(endpoint+'/draft', data=body, headers=headers)) as response:
+            self.assertEqual(json.load(response)['status'], 'needs_review')
+        stale = json.dumps({'expectedDraftSha256': snapshot['draftSha256']}).encode()
+        with self.assertRaises(urllib.error.HTTPError) as caught:
+            self.opener.open(urllib.request.Request(endpoint+'/approve', data=stale, headers=headers))
+        self.assertEqual(caught.exception.code, 409)
+        self.assertEqual(json.load(caught.exception)['code'], 'DRAFT_CHANGED')
+        caught.exception.close()
+        with self.assertRaises(urllib.error.HTTPError) as caught:
+            self.opener.open(urllib.request.Request(endpoint+'/approve', data=b'{}', headers=headers))
+        self.assertEqual(caught.exception.code, 400)
+        caught.exception.close()
+
     def test_cli_missing_token_and_business_rejection_exit_codes(self):
         env = {key: value for key, value in os.environ.items() if key != 'IMPORT_TOKEN'}
         missing = subprocess.run([sys.executable, str(ROOT / 'import-cli'), 'list'], env=env, capture_output=True)
@@ -415,6 +440,396 @@ class HTTPAcceptance(WorkspaceCase):
         refusal = subprocess.run([sys.executable, str(ROOT / 'import-cli'), 'apply', job], env=env, capture_output=True)
         self.assertEqual(refusal.returncode, 2)
         self.assertEqual(json.loads(refusal.stderr)['code'], 'REVIEW_REQUIRED')
+
+
+
+PAPER = '''## Q1
+topicId: cnm_001
+difficulty: standard
+type: numeric
+prompt: 正数与负数中，-2的相反数是多少？
+answer: 2
+explanation: 相反数之和为零。
+verify: -(-2)
+'''.encode()
+
+
+class CompleteAcceptance(WorkspaceCase):
+    def paper(self, content=PAPER, filename='exam.md', prefix='cnm'):
+        job = self.service.create_job('paper', filename, content, {'subjectPrefix': prefix})['jobId']
+        run_once(self.service)
+        return job
+
+    def completed_expand(self):
+        job = self.expand()
+        run_once(self.service)
+        draft = self.service.draft(job)
+        for topic in draft['topics']:
+            tid = topic['id']
+            topic.update(description='原创管道测试：负数的识别与相反数。',
+                         mastery_criteria=['能辨别负数', '能计算相反数'],
+                         diagnostic_question={'question': '负数-2的相反数是多少？', 'answer': '2'},
+                         standards=[{'id': 'cms-2022:4.NA.01', 'confidence': 'inferred'}])
+            draft['questions'].extend(dict(id=tid + '_q' + str(i), topicId=tid,
+                 difficulty='basic' if i == 1 else 'standard', type='numeric',
+                 prompt='负数-2的相反数是多少？' if i == 1 else f'负数-{i+1}的相反数是多少？',
+                 answer=str(2 if i == 1 else i+1), explanation='相反数之和为零。',
+                 verify=str(2 if i == 1 else i+1)) for i in range(1, 4))
+        draft['dependencies'].insert(0, dict(topicId=draft['topics'][0]['id'], prerequisiteId='cnm_001',
+                                            strength='soft', reason='人工审核：先掌握正负数概念。'))
+        self.service.revise(job, draft, self.service.draft_digest(job), '补齐原创测试题、标准与先修关系')
+        self.service.approve(job)
+        return job
+
+    def test_paper_md_txt_csv_happy_path_and_human_gate(self):
+        cases = [('exam.md', PAPER), ('exam.txt', PAPER.replace(b'## Q1', b'1.')),
+                 ('exam.csv', 'prompt,answer,type,difficulty,topicId,explanation,verify\n负数-2的相反数,2,numeric,standard,cnm_001,相反数之和为零,2\n'.encode())]
+        for filename, content in cases:
+            job = self.paper(content, filename)
+            self.assertEqual(self.service.get(job)['status'], 'needs_review')
+            self.assertEqual(len(self.service.draft(job)['questions']), 1)
+            self.assertEqual(self.formal_hashes(), self.baseline)
+            self.assert_code('REVIEW_REQUIRED', lambda: apply_job(self.service, job))
+            self.service.approve(job)
+            before = len(read_json(self.service.data / 'questions.json'))
+            apply_job(self.service, job)
+            self.assertEqual(len(read_json(self.service.data / 'questions.json')), before+1)
+            self.assertEqual(self.service.get(job)['status'], 'applied')
+            self.baseline = self.formal_hashes()
+
+    def test_paper_suggestions_unparsed_and_zero_questions(self):
+        job = self.paper(PAPER.replace(b'topicId: cnm_001\n', b'') + b'\n## Q2\nprompt: incomplete')
+        self.assertEqual(self.service.get(job)['status'], 'needs_review')
+        question = self.service.draft(job)['questions'][0]
+        self.assertIsNone(question['topicId'])
+        self.assertNotIn('suggestedTopicIds', question)
+        report = read_json(self.service.job_dir(job) / 'reports/parse.json')
+        self.assertTrue(report['matches'][0]['suggestedTopicIds'])
+        self.assertTrue(report['unparsed'])
+        self.service.approve(job)
+        self.assert_code('TOPIC_ID_REQUIRED', lambda: apply_job(self.service, job))
+        empty = self.paper(b'no questions here')
+        self.assertEqual(self.service.get(empty)['error']['code'], 'EMPTY_PAPER')
+        self.assertEqual(self.formal_hashes(), self.baseline)
+
+    def test_verify_mismatch_is_reported_and_never_applied(self):
+        job = self.paper(PAPER.replace(b'answer: 2', b'answer: 3'))
+        self.assertEqual(self.service.get(job)['status'], 'needs_review')
+        self.assertTrue(read_json(self.service.job_dir(job) / 'reports/verify.json')['mismatch'])
+        self.service.approve(job)
+        self.assert_code('VERIFY_MISMATCH', lambda: apply_job(self.service, job))
+        self.assertEqual(self.formal_hashes(), self.baseline)
+
+    def test_all_subject_papers_and_wrong_subject_rejection(self):
+        from import_module.store import SUBJECTS
+        topics = read_json(self.service.data / 'topics.json')
+        for prefix in SUBJECTS:
+            topic = next(t for t in topics if t['id'].startswith(prefix + '_') and not t.get('external'))
+            job = self.paper(PAPER.replace(b'cnm_001', topic['id'].encode()), prefix=prefix)
+            self.assertEqual(self.service.get(job)['status'], 'needs_review', prefix)
+        wrong = self.paper(PAPER, prefix='cne')
+        self.assertEqual(self.service.get(wrong)['error']['code'], 'SUBJECT_CONFLICT')
+
+    def test_revision_and_approval_reject_stale_displayed_digest(self):
+        job = self.paper()
+        old = self.service.draft_digest(job)
+        draft = self.service.draft(job)
+        draft['questions'][0]['explanation'] += ' 已校对。'
+        self.service.revise(job, draft, old, '校对解释')
+        self.assert_code('DRAFT_CHANGED', lambda: self.service.approve(job, expected_digest=old))
+        self.assert_code('DRAFT_CHANGED', lambda: self.service.revise(job, draft, old))
+        self.service.approve(job, expected_digest=self.service.draft_digest(job))
+        current = self.service.draft_digest(job)
+        draft['questions'][0]['explanation'] += ' 再校对。'
+        self.service.revise(job, draft, current)
+        self.assertEqual(self.service.get(job)['status'], 'needs_review')
+        self.assert_code('REVIEW_REQUIRED', lambda: apply_job(self.service, job))
+        self.assertTrue(list((self.service.job_dir(job) / 'review').glob('revision-*')))
+
+    def test_multifile_expand_success_and_no_apply_no_writes(self):
+        job = self.completed_expand()
+        self.assertEqual(self.formal_hashes(), self.baseline)
+        apply_job(self.service, job)
+        for name in ('topics', 'dependencies', 'questions'):
+            self.assertNotEqual(digest(self.service.data / (name+'.json')), self.baseline['data/'+name+'.json'])
+        self.assertEqual(self.service.get(job)['status'], 'applied')
+        intent = read_json(self.service.job_dir(job) / 'review/apply-intent.json')
+        self.assertEqual(intent['state'], 'committed')
+        self.assertEqual(len(intent['targets']), 3)
+        from import_module.validation import validate_root
+        self.assertTrue(validate_root(self.workspace)['ok'])
+
+    def test_multifile_write_failure_rolls_back_each_boundary(self):
+        import import_module.transactions as transactions
+        for boundary in (1, 2, 3):
+            job = self.completed_expand()
+            original = transactions.atomic_bytes
+            count = 0
+            def fail(path, content):
+                nonlocal count
+                if Path(path).parent == self.service.data:
+                    count += 1
+                    if count == boundary:
+                        raise OSError('事务目标写入故障')
+                return original(path, content)
+            with mock.patch.object(transactions, 'atomic_bytes', side_effect=fail):
+                with self.assertRaises(OSError):
+                    apply_job(self.service, job)
+            self.assertEqual(self.formal_hashes(), self.baseline)
+            self.assertEqual(self.service.get(job)['status'], 'approved')
+            apply_job(self.service, job)
+            self.baseline = self.formal_hashes()
+
+    def test_multifile_crash_before_commit_recovers_before_next_apply(self):
+        import import_module.transactions as transactions
+        job = self.completed_expand()
+        original = transactions.atomic_bytes
+        count = 0
+        def crash(path, content):
+            nonlocal count
+            original(path, content)
+            if Path(path).parent == self.service.data:
+                count += 1
+                if count == 2:
+                    raise SystemExit('模拟进程死亡')
+        with mock.patch.object(transactions, 'atomic_bytes', side_effect=crash):
+            with self.assertRaises(SystemExit):
+                apply_job(self.service, job)
+        # GET不得自行恢复正式库，也不能展示混合快照。
+        self.assert_code('TRANSACTION_PENDING', lambda: self.service.diff(job))
+        other = self.mapping(False)
+        run_once(self.service)  # worker显式恢复入口先回滚，再解析other。
+        self.assertEqual(self.formal_hashes(), self.baseline)
+        self.service.approve(other)
+        apply_job(self.service, other)
+        apply_job(self.service, job)
+        self.assertEqual(self.service.get(job)['status'], 'applied')
+
+    def test_multifile_commit_before_meta_crash_finishes_once(self):
+        job = self.completed_expand()
+        save = self.service.save
+        def crash(meta):
+            if meta['status'] == 'applied':
+                raise OSError('已commit但meta保存失败')
+            save(meta)
+        with mock.patch.object(self.service, 'save', side_effect=crash):
+            with self.assertRaises(OSError):
+                apply_job(self.service, job)
+        hashes = self.formal_hashes()
+        apply_job(self.service, job)
+        self.assertEqual(self.formal_hashes(), hashes)
+        self.assertEqual(self.service.get(job)['status'], 'applied')
+
+    def test_expand_missing_coverage_stays_approved_and_unchanged(self):
+        job = self.expand()
+        run_once(self.service)
+        self.service.approve(job)
+        self.assert_code('VALIDATION_FAILED', lambda: apply_job(self.service, job))
+        self.assertEqual(self.formal_hashes(), self.baseline)
+
+    def test_revision_crash_never_exposes_or_approves_mixed_version(self):
+        import import_module.revision as revision
+        from import_module.apply import recover_pending
+        job = self.paper()
+        before = self.service.draft(job)
+        draft = json.loads(json.dumps(before))
+        draft['questions'][0]['answer'] = '9'
+        draft['dependencies'] = [dict(topicId='cnm_001', prerequisiteId='cnm_002', strength='soft', reason='仅测试修订事务')]
+        expected = self.service.draft_digest(job)
+        self.service.approve(job)
+        original = revision.atomic_json
+        count = 0
+        def crash(path, value):
+            nonlocal count
+            original(path, value)
+            if Path(path).parent.name == 'draft':
+                count += 1
+                if count == 3:
+                    raise SystemExit('模拟修订中断')
+        with mock.patch.object(revision, 'atomic_json', side_effect=crash):
+            with self.assertRaises(SystemExit):
+                self.service.revise(job, draft, expected)
+        self.assert_code('REVISION_PENDING', lambda: self.service.snapshot(job))
+        self.assert_code('REVISION_PENDING', lambda: self.service.approve(job))
+        recover_pending(self.service)
+        self.assertEqual(self.service.draft(job), before)
+        self.assertEqual(self.service.get(job)['status'], 'needs_review')
+        self.assert_code('REVIEW_REQUIRED', lambda: apply_job(self.service, job))
+        self.assertEqual(self.formal_hashes(), self.baseline)
+
+    def test_real_process_death_and_id_competition(self):
+        from import_module.apply import recover_pending
+        job = self.completed_expand()
+        script = '''import os,sys
+from pathlib import Path
+from import_module.store import Service
+from import_module.apply import apply_job
+import import_module.transactions as tx
+service=Service(sys.argv[1]); original=tx.atomic_bytes
+count=0
+def crash(path,content):
+    global count
+    original(path,content)
+    if Path(path).parent==service.data:
+        count+=1
+        if count==2: os._exit(77)
+tx.atomic_bytes=crash
+apply_job(service,sys.argv[2])
+'''
+        process = subprocess.run([sys.executable, '-c', script, str(self.workspace), job], cwd=ROOT)
+        self.assertEqual(process.returncode, 77)
+        recover_pending(self.service)
+        self.assertEqual(self.formal_hashes(), self.baseline)
+        second = self.completed_expand()
+        old_ids = {t['id'] for t in self.service.draft(second)['topics']}
+        apply_job(self.service, job)
+        apply_job(self.service, second)
+        topics = read_json(self.service.data / 'topics.json')
+        self.assertEqual(len({t['id'] for t in topics}), len(topics))
+        intent = read_json(self.service.job_dir(second) / 'review/apply-intent.json')
+        self.assertTrue(all(intent['idMap'][tid] != tid for tid in old_ids))
+        questions = read_json(self.service.data / 'questions.json')
+        self.assertEqual(len({q['id'] for q in questions}), len(questions))
+        for tid in old_ids:
+            new_tid = intent['idMap'][tid]
+            self.assertEqual(sum(q['topicId'] == new_tid for q in questions), 3)
+        from import_module.validation import validate_root
+        self.assertTrue(validate_root(self.workspace)['ok'])
+
+    def test_rollback_failure_remains_recoverable_and_blocks_snapshots(self):
+        import import_module.transactions as tx
+        from import_module.apply import recover_pending
+        job = self.completed_expand()
+        original = tx.atomic_bytes
+        count = 0
+        def fail(path, content):
+            nonlocal count
+            if Path(path).parent == self.service.data:
+                count += 1
+                if count >= 2:
+                    raise OSError('写入与补偿回滚均故障')
+            original(path, content)
+        with mock.patch.object(tx, 'atomic_bytes', side_effect=fail):
+            with self.assertRaises(OSError):
+                apply_job(self.service, job)
+            self.assert_code('TRANSACTION_PENDING', lambda: self.service.diff(job))
+            with self.assertRaises(OSError):
+                recover_pending(self.service)
+        self.assertEqual(read_json(self.service.job_dir(job) / 'review/apply-intent.json')['state'], 'prepared')
+        recover_pending(self.service)
+        self.assertEqual(self.formal_hashes(), self.baseline)
+        apply_job(self.service, job)
+        self.assertEqual(self.service.get(job)['status'], 'applied')
+
+    def test_recovery_checks_all_targets_and_backups_before_any_restore(self):
+        import import_module.transactions as tx
+        from import_module.apply import recover_pending
+        job = self.completed_expand()
+        original = tx.atomic_bytes
+        count = 0
+        def crash(path, content):
+            nonlocal count
+            original(path, content)
+            if Path(path).parent == self.service.data:
+                count += 1
+                if count == 2:
+                    raise SystemExit('模拟部分提交')
+        with mock.patch.object(tx, 'atomic_bytes', side_effect=crash):
+            with self.assertRaises(SystemExit):
+                apply_job(self.service, job)
+        intent = read_json(self.service.job_dir(job) / 'review/apply-intent.json')
+        target = self.service.data / intent['targets'][0]['target']
+        valid = target.read_bytes()
+        target.write_bytes(b'[]')
+        mixed = self.formal_hashes()
+        self.assert_code('RECOVERY_CONFLICT', lambda: recover_pending(self.service))
+        self.assertEqual(self.formal_hashes(), mixed)
+        self.assert_code('RECOVERY_CONFLICT', lambda: apply_job(self.service, self.mapping(False)))
+        self.assertEqual(self.formal_hashes(), mixed)
+        target.write_bytes(valid)
+        backup = self.service.job_dir(job) / intent['transactionDir'] / '1.before'
+        original_backup = backup.read_bytes()
+        backup.write_bytes(b'broken')
+        mixed = self.formal_hashes()
+        self.assert_code('RECOVERY_CONFLICT', lambda: recover_pending(self.service))
+        self.assertEqual(self.formal_hashes(), mixed)
+        backup.write_bytes(original_backup)
+        recover_pending(self.service)
+        self.assertEqual(self.formal_hashes(), self.baseline)
+
+    def test_ocr_failures_never_leave_old_normalized(self):
+        cases = [({}, 'OCR_CONFIG_INVALID'),
+                 ([sys.executable, '-c', 'raise SystemExit(9)'], 'OCR_FAILED'),
+                 ([sys.executable, '-c', 'import time; time.sleep(2)'], 'OCR_TIMEOUT'),
+                 ([sys.executable, '-c', 'pass'], 'OCR_OUTPUT_INVALID'),
+                 ([sys.executable, '-c', "import sys; from pathlib import Path; Path(sys.argv[sys.argv.index('--output')+1]).write_bytes(bytes([255]))"], 'OCR_OUTPUT_INVALID'),
+                 ([sys.executable, '-c', "import sys; from pathlib import Path; Path(sys.argv[sys.argv.index('--output')+1]).symlink_to(sys.argv[sys.argv.index('--input')+1])"], 'OCR_OUTPUT_INVALID')]
+        for command, code in cases:
+            job = self.service.create_job('paper', 'scan.pdf', b'%PDF-fixture', {'subjectPrefix': 'cnm'})['jobId']
+            normalized = self.service.job_dir(job) / 'source/normalized.md'
+            normalized.write_bytes(PAPER)
+            with mock.patch.dict(os.environ, {'IMPORT_OCR_COMMAND': json.dumps(command), 'IMPORT_OCR_TIMEOUT': '0.2'}):
+                run_once(self.service)
+            self.assertEqual(self.service.get(job)['error']['code'], code)
+            self.assertFalse(normalized.exists())
+            self.assertEqual(self.service.source(job), b'%PDF-fixture')
+        with mock.patch.dict(os.environ, {'IMPORT_OCR_COMMAND': json.dumps([sys.executable, str(ROOT/'import-module/ocr_fixture.py')])}):
+            for pages in ('1-11', '0', '8-2', '1,2,3,4,5,6,7,8,9,10,11'):
+                job = self.service.create_job('textbook', 'scan.pdf', b'%PDF-fixture',
+                        dict(subjectPrefix='cnm', mode='expand', ocrPages=pages))['jobId']
+                run_once(self.service)
+                self.assertEqual(self.service.get(job)['error']['code'], 'OCR_PAGES_REQUIRED')
+
+    def test_choice_multiline_and_csv_json_choices(self):
+        text = '''## Q1
+topicId: cnm_001
+type: choice
+difficulty: standard
+prompt: 下列哪一个是负数？
+choices:
+- A: -2
+- B: 0
+- C: 2
+answer: A
+explanation: 负数小于0。
+verify: -2
+'''.encode()
+        job = self.paper(text)
+        self.assertEqual(self.service.get(job)['status'], 'needs_review')
+        report = read_json(self.service.job_dir(job) / 'reports/verify.json')
+        self.assertEqual(report['mismatch'], [])
+        self.assertEqual(len(report['auto_verified']), 1)
+        import csv, io
+        stream = io.StringIO()
+        writer = csv.writer(stream)
+        writer.writerow(['prompt', 'answer', 'type', 'difficulty', 'topicId', 'choices', 'explanation', 'verify'])
+        writer.writerow(['下列哪个是负数？', 'A', 'choice', 'standard', 'cnm_001',
+                         json.dumps([{'key': 'A', 'text': '-2'}, {'key': 'B', 'text': '0'}, {'key': 'C', 'text': '2'}]), '负数小于0', '-2'])
+        job = self.paper(stream.getvalue().encode(), 'exam.csv')
+        self.service.approve(job)
+        apply_job(self.service, job)
+        self.assertEqual(self.service.get(job)['status'], 'applied')
+
+    def test_ocr_fixture_and_disabled_pdf_paths(self):
+        for kind in ('paper', 'textbook'):
+            meta = self.service.create_job(kind, 'scan.pdf', b'%PDF-fixture',
+                     dict(subjectPrefix='cnm', mode='expand', grade=7, term='上', ocrPages='1-2'))
+            run_once(self.service)
+            self.assertEqual(self.service.get(meta['jobId'])['error']['code'], 'OCR_REQUIRED')
+        fixture = ROOT / 'import-module/ocr_fixture.py'
+        with mock.patch.dict(os.environ, {'IMPORT_OCR_COMMAND': json.dumps([sys.executable, str(fixture)])}):
+            for kind in ('paper', 'textbook'):
+                job = self.service.create_job(kind, 'scan.pdf', b'%PDF-fixture',
+                       dict(subjectPrefix='cnm', mode='expand', grade=7, term='上', ocrPages='1-2'))['jobId']
+                run_once(self.service)
+                self.assertEqual(self.service.get(job)['status'], 'needs_review')
+                self.assertTrue((self.service.job_dir(job) / 'source/normalized.md').is_file())
+                self.assertEqual(self.service.source(job), b'%PDF-fixture')
+            no_pages = self.service.create_job('textbook', 'scan.pdf', b'%PDF-fixture',
+                             dict(subjectPrefix='cnm', mode='expand', grade=7, term='上'))['jobId']
+            run_once(self.service)
+            self.assertEqual(self.service.get(no_pages)['error']['code'], 'OCR_PAGES_REQUIRED')
+        self.assertEqual(self.formal_hashes(), self.baseline)
 
 
 if __name__ == '__main__':

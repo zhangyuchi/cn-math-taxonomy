@@ -29,7 +29,9 @@ async function request(path, body) {
 function setActions(meta) {
   node('approve').disabled = !meta || meta.status !== 'needs_review';
   node('reject').disabled = !meta || meta.status !== 'needs_review';
-  node('apply').disabled = !meta || meta.status !== 'approved' || meta.mode !== 'mappings_only';
+  node('apply').disabled = !meta || meta.status !== 'approved';
+  node('save-draft').disabled = !meta || !['needs_review', 'approved'].includes(meta.status);
+  node('draft-editor').disabled = !meta || !['needs_review', 'approved'].includes(meta.status);
 }
 
 // 选中任务变化时清除旧操作目标，迟到响应不能覆盖新任务详情。
@@ -38,7 +40,8 @@ async function showJob(id) {
   displayed = null;
   setActions(null);
   node('comment').value = '';
-  const [meta, diff] = await Promise.all([request('jobs/' + id), request('jobs/' + id + '/diff')]);
+  const meta = await request('jobs/' + id);
+  const diff = meta.diff;
   if (selected !== id) return;
   displayed = meta;
   node('empty').hidden = true;
@@ -51,6 +54,8 @@ async function showJob(id) {
   node('job-error').textContent = meta.error ? meta.error.code + '：' + meta.error.error : '';
   node('source').textContent = meta.sourcePreview;
   node('diff').textContent = JSON.stringify(diff, null, 2);
+  node('draft-editor').value = JSON.stringify(meta.draft, null, 2);
+  node('draft-digest').textContent = meta.draftSha256;
   node('reports').textContent = JSON.stringify(meta.reports, null, 2);
   setActions(meta);
   for (const button of node('jobs').querySelectorAll('button')) {
@@ -97,7 +102,7 @@ async function decide(action) {
     throw new Error('请填写驳回原因');
   }
   setActions(null);
-  const body = action === 'approve' ? { comment } : action === 'reject' ? { reason: comment } : {};
+  const body = action === 'approve' ? { comment, expectedDraftSha256: job.draftSha256 } : action === 'reject' ? { reason: comment } : {};
   try {
     await request('jobs/' + job.jobId + '/' + action, body);
     node('message').classList.remove('error');
@@ -109,6 +114,27 @@ async function decide(action) {
     throw error;
   }
 }
+
+// 修订绑定当前显示版本；先保存修订，再重新读取并批准，避免旧页面授权新草稿。
+async function saveDraft() {
+  if (!displayed) return;
+  const job = displayed;
+  const draft = JSON.parse(node('draft-editor').value);
+  setActions(null);
+  try {
+    await request('jobs/' + job.jobId + '/draft', {
+      draft, expectedDraftSha256: job.draftSha256, comment: node('comment').value.trim()
+    });
+    node('message').classList.remove('error');
+    node('message').textContent = '修订已保存，须重新核对并批准：' + job.jobId;
+    await loadJobs();
+    if (selected === job.jobId) await showJob(job.jobId);
+  } catch (error) {
+    if (selected === job.jobId) setActions(displayed);
+    throw error;
+  }
+}
+node('save-draft').addEventListener('click', () => saveDraft().catch(showError));
 
 for (const action of ['approve', 'reject', 'apply']) {
   node(action).addEventListener('click', () => decide(action).catch(showError));

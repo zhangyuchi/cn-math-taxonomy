@@ -1,0 +1,22 @@
+[Unit]
+Description=cn-math import API (authenticated loopback origin)
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/srv/cn-math-taxonomy/import-current
+EnvironmentFile=/etc/cn-math-import.env
+ExecStart=/usr/bin/python3 /srv/cn-math-taxonomy/import-current/import-api --port 8765
+Restart=on-failure
+RestartSec=3
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/srv/cn-math-taxonomy/import-workspace
+
+[Install]
+WantedBy=multi-user.target

@@ -189,7 +189,7 @@ class Service:
                     createdBy='ops', flags=dict(autoApplyMappings=auto,
                     requiresHumanReview=kind != 'textbook' or mode != 'mappings_only'),
                     sourceFiles=[source_path], sourceSha256=digest_bytes(content), error=None,
-                    parameters={key: params[key] for key in ('grade', 'term', 'domain', 'label', 'source') if key in params})
+                    parameters={key: params[key] for key in ('grade', 'term', 'domain', 'label', 'source', 'ocrPages') if key in params})
         atomic_json(staging / 'meta.json', meta)
         for name in DRAFT_NAMES:
             atomic_json(staging / 'draft' / (name + '.json'), {} if name == 'mappings' else [])
@@ -212,6 +212,10 @@ class Service:
         """只读 job 内普通文件；拒绝绝对路径、.. 和符号链接越界。"""
         directory = self.job_dir(job_id)
         path = Path(relative)
+        if path.parts and path.parts[0] == 'draft':
+            from .revision import pending
+            if pending(self, job_id):
+                raise ImportErrorResponse('REVISION_PENDING', '草稿修订待恢复，暂不可读', 409)
         target = (directory / path).resolve()
         if path.is_absolute() or '..' in path.parts or not target.is_relative_to(directory):
             raise ImportErrorResponse('INVALID_PATH', '文件必须位于当前 job 内', 400)
@@ -219,13 +223,28 @@ class Service:
             raise ImportErrorResponse('NOT_FOUND', '文件不存在', 404)
         return target.read_bytes()
 
-    def draft(self, job_id):
+    def _draft_files(self, job_id):
         """读取所有约定草稿文件；缺失或未知 JSON 文件不能被静默忽略。"""
         directory = self.job_dir(job_id) / 'draft'
         expected = {name + '.json' for name in DRAFT_NAMES}
         if {p.name for p in directory.iterdir()} != expected:
             raise ImportErrorResponse('INVALID_DRAFT', '草稿文件集合不符合约定')
-        return {name: json.loads(self.read_file(job_id, 'draft/' + name + '.json')) for name in DRAFT_NAMES}
+        for path in directory.iterdir():
+            if path.is_symlink() or not path.resolve().is_relative_to(self.job_dir(job_id)):
+                raise ImportErrorResponse('INVALID_PATH', '草稿不允许符号链接', 400)
+        return {name: json.loads((directory / (name + '.json')).read_bytes()) for name in DRAFT_NAMES}
+
+    def draft(self, job_id):
+        """拒绝读取未完成修订中的混合五文件；GET不执行恢复。"""
+        from .revision import pending
+        if pending(self, job_id):
+            raise ImportErrorResponse('REVISION_PENDING', '草稿修订待恢复，请先运行worker', 409)
+        return self._draft_files(job_id)
+
+    def revise(self, job_id, draft, expected_digest, comment=''):
+        """审核者通过完整摘要修订草稿，正式数据不变，审批失效。"""
+        from .revision import revise
+        return revise(self, job_id, draft, expected_digest, comment)
 
     def draft_digest(self, job_id):
         """将完整 draft 内容绑定到一次审批，不使用客户端提供的摘要。"""
@@ -238,12 +257,12 @@ class Service:
                 and all(draft[name] == [] for name in DRAFT_NAMES if name != 'mappings')
                 and isinstance(draft['mappings'], dict) and bool(draft['mappings']))
 
-    def approve(self, job_id, comment='', automatic=False):
+    def approve(self, job_id, comment='', automatic=False, expected_digest=None):
         """在任务锁内绑定审批与草稿；自动审批另须实际纯 mappings 且校验通过。"""
         with file_lock(self.job_dir(job_id) / '.lock'):
-            return self._approve_locked(job_id, comment, automatic)
+            return self._approve_locked(job_id, comment, automatic, expected_digest)
 
-    def _approve_locked(self, job_id, comment='', automatic=False):
+    def _approve_locked(self, job_id, comment='', automatic=False, expected_digest=None):
         """worker 已持有任务锁时复用相同门闸，不重复获取 flock。"""
         meta = self.get(job_id)
         if automatic and (not self.mappings_only(job_id) or not meta['flags']['autoApplyMappings']
@@ -253,8 +272,11 @@ class Service:
         if meta['status'] not in allowed:
             raise ImportErrorResponse('INVALID_STATE', '当前状态不允许审批', 409)
         self.source(job_id)
+        current_digest = self.draft_digest(job_id)
+        if expected_digest is not None and expected_digest != current_digest:
+            raise ImportErrorResponse('DRAFT_CHANGED', '审核所见草稿已过期，请重新读取', 409)
         decision = dict(decision='approve', actor='system:auto-mappings' if automatic else 'ops',
-                        comment=comment, at=now().isoformat(timespec='seconds'), draftSha256=self.draft_digest(job_id))
+                        comment=comment, at=now().isoformat(timespec='seconds'), draftSha256=current_digest)
         atomic_json(self.job_dir(job_id) / 'review/decision.json', decision)
         meta['status'], meta['error'] = 'approved', None
         self.save(meta)
@@ -294,9 +316,9 @@ class Service:
             atomic_json(self.imports / '_queue' / job_id, {'jobId': job_id})
             return meta
 
-    def diff(self, job_id):
+    def _diff_locked(self, job_id, draft=None):
         """返回草稿与当前正式数据的只读对比，不生成新的解析结果。"""
-        draft = self.draft(job_id)
+        draft = self.draft(job_id) if draft is None else draft
         result = {}
         for name in ('topics', 'dependencies', 'questions'):
             current = read_json(self.data / (name + '.json'))
@@ -318,3 +340,29 @@ class Service:
             except ImportErrorResponse as exc:
                 result['mappings']['error'] = {'code': exc.code, 'error': str(exc)}
         return result
+
+    def diff(self, job_id):
+        """全库/任务锁保护正式快照，只读路径不修复正式数据。"""
+        from .transactions import assert_clean
+        with file_lock(self.imports / '_apply.lock'):
+            assert_clean(self)
+            with file_lock(self.job_dir(job_id) / '.lock'):
+                return self._diff_locked(job_id)
+
+    def snapshot(self, job_id):
+        """返回同一锁内的meta/draft/diff/reports/摘要，供审核版本绑定。"""
+        from .transactions import assert_clean
+        with file_lock(self.imports / '_apply.lock'):
+            assert_clean(self)
+            with file_lock(self.job_dir(job_id) / '.lock'):
+                meta, draft = self.get(job_id), self.draft(job_id)
+                meta['draft'], meta['draftSha256'] = draft, digest_bytes(json_bytes(draft))
+                meta['diff'] = self._diff_locked(job_id, draft)
+                meta['reports'] = {p.stem: read_json(p) for p in (self.job_dir(job_id) / 'reports').glob('*.json')}
+                original = self.read_file(job_id, meta['sourceFiles'][0])
+                if meta['sourceFiles'][0].endswith('.pdf'):
+                    normalized = self.job_dir(job_id) / 'source/normalized.md'
+                    meta['sourcePreview'] = normalized.read_text(encoding='utf-8')[:65536] if normalized.exists() else 'PDF原文已保留；暂无成功OCR文本'
+                else:
+                    meta['sourcePreview'] = original[:65536].decode('utf-8', errors='replace')
+                return meta

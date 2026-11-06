@@ -1,29 +1,36 @@
-# 运行教材导入骨架
+# 导入教材与试卷
 
-本模块提供 CLI → HTTP API → 单 worker → 草稿/审核 → mappings 应用链路。
-本次交付是 **v1 骨架**：教材目录扩点可生成草稿并审核；仅纯 mappings 支持正式工作副本写入。
-完整文本卷解析、多文件扩库事务、OCR、题目/课标/边编辑、生产部署尚未实现。
-设计与准入依据见 [实现计划](../docs/superpowers/plans/2026-11-06-import-module-implementation.md) 和 [审核记录](../docs/superpowers/reviews/2026-11-06-import-module-review.md)。
+模块提供 CLI → 认证API → 单worker → 草稿修订/审核 → apply。支持教材TOC（expand/mappings_only）、文本卷MD/TXT/CSV、可开关PDF OCR插件接口，以及经过完整校验的可恢复多文件扩库。
+新点/新题必须人工批准；仅纯mappings可在校验成功后自动应用。apply只更新独立工作副本，**不会自动发布线上数据**。
 
-## 环境与快速验收
+范围、事务与审批契约见[修订规格附录D](../docs/superpowers/specs/2026-11-03-import-module-design.md#附录-d2026-11-06-完整交付准入优先于附录-c-的骨架范围)、[完整计划](../docs/superpowers/plans/2026-11-06-import-module-completion.md)和[验收记录](../docs/superpowers/reviews/2026-11-06-import-module-completion-review.md)。旧骨架审核只描述历史。
 
-运行依赖：Linux、Python 3.10+ 标准库；本次实测 Python 3.14.4，无第三方运行依赖。
-从仓库根执行：
+## 快速自测
+
+运行环境：Linux、Python 3.10+标准库（发布脚本需Python 3.12+的安全tar解包）；本轮开发机Python 3.14、VPS Python 3.12。
+无需运行依赖安装。以下测试全部在隔离副本apply，不修改仓库正式JSON：
 
 ```bash
-python3 -m unittest discover -s tests -p 'test_import_module.py' -v
+python3 -W error::ResourceWarning -m unittest discover -s tests -p 'test_import_module.py' -v
+python3 -m unittest discover -s tests -p 'test_publish.py' -v
 python3 import-module/smoke.py
 ```
 
-smoke 创建独立临时数据副本，实际启动 API、调用 CLI 和单次 worker。
-预期输出 `ok: true`：TOC 需要人工审核，批准后仍明确提示扩库应用未实现；显式 mappings 自动 applied。
-脚本退出关闭进程并清理临时副本，仓库正式 JSON 不变。
+smoke用真实API/CLI/worker独立进程完成paper人工门闸/apply、教材完整修订后多文件apply、mappings自动apply、OCR_REQUIRED与fixture插件；候选库通过原validator。
+Chromium审核台验收使用可选测试依赖，不是服务运行依赖：
 
-## 准备持久工作副本
+```bash
+uv venv --python 3.12 .codex-run/browser-venv
+uv pip install --python .codex-run/browser-venv/bin/python playwright
+# CHROME指定已安装的Chrome/Chromium；也可用该venv的playwright install chromium安装浏览器
+CHROME=/path/to/chrome .codex-run/browser-venv/bin/python import-module/browser-smoke.py
+```
 
-**工作区不能被静态服务器提供，不能放在代码仓库、公开静态根或 release 下。**
-`data/imports/.gitignore` 只防止意外提交，不提供 HTTP 访问控制。
-以下命令创建新的本地临时工作区；如需持久运行，使用独立私有目录并自行备份。
+输出含 `ok: true`；截图写忽略的 `.codex-run/`。测试依赖缺失须安装，不能以未运行替代验收。
+
+## 准备私有工作区
+
+workspace必须位于代码仓库、公开静态根、current及releases之外。`data/imports/.gitignore`只防意外提交，不能提供HTTP访问控制。
 
 ```bash
 export IMPORT_WORKSPACE="$(mktemp -d /tmp/cn-math-import.XXXXXX)"
@@ -35,92 +42,121 @@ export IMPORT_TOKEN
 export IMPORT_API_URL=http://127.0.0.1:8765
 ```
 
-在保留相同三个环境变量的两个终端分别运行：
+两个终端使用相同环境，分别运行 `python3 import-api` 和 `python3 import-worker`。
+API固定绑定loopback；worker支持 `--once`。缺workspace/token失败关闭，不隐式使用仓库目录。
+源MD/TXT/CSV/PDF限1MiB；HTTP请求限2MiB；修订草稿限1MiB。源必须UTF-8（PDF由插件转换）。
 
-```bash
-python3 import-api
-```
+## 教材与版本对照
 
-```bash
-python3 import-worker
-```
-
-worker 也支持 `python3 import-worker --once`，每次最多处理一个 job，并先恢复中断的 queued/running 任务及未完成 apply。
-缺少 workspace 或 token 时拒绝隐式使用仓库静态根；API 固定绑定 `127.0.0.1`，默认端口 8765。
-
-## 教材目录与显式 mappings
-
-扩点 TOC 可使用 [示例 MD](examples/toc.md)：头部 `grade: 7` / `term: 上` / 可选 `prefix: cnm`，一级标题为章，二级标题或普通行作为知识点。
-也支持 UTF-8 TXT、CSV：`grade,term,unit,chapter,topic_name,optional_notes`。
-缺失 grade/term 可通过 CLI 补充；源中已有而与 CLI 冲突时失败。
+expand输入采用[TOC示例](examples/toc.md)，或CSV `grade,term,unit,chapter,topic_name,optional_notes`。MD头部有grade/term，一级标题为章，二级标题/普通行为知识点；也可用CLI补元数据，冲突失败。
 
 ```bash
 python3 import-cli textbook --mode expand --prefix cnm --file import-module/examples/toc.md
 ```
 
-worker 将生成带“导入草稿，待审”标记的 topics、相邻 soft 边、课标建议及真实候选全量校验报告，并进入 `needs_review`。
-目录不包含题库，覆盖率/孤立点等错误会保留；不会为了通过校验虚构题目或跨库依赖。
-`--domain` 可显式指定待审领域，否则使用配置建议值。
+TOC生成新点、相邻soft边、空课标建议与真实校验缺口。不会自动虚构题库或跨正式库先修边。
+在审核台修订五份草稿：补齐描述/诊断题、真实题库、先修关系和已有课标挂靠。每个新点必须满足原validator的≥3题、basic/standard、q1题干、图连通及学科约束。标准采用现库对象，例如 `{"id":"cms-2022:4.NA.01","confidence":"inferred"}`；建议文件不会直接修改课标正文。
 
-mappings 必须显式提供 `topicId`，可用 [CSV 示例](examples/mappings.csv) 或同列名的 Markdown 表格。
-最小列为 `topicId,grade,term`；可选 `unit,chapter,note`。
-目前仅支持 `cnm`/`*_math` 与 `cne`/`*_english`，其他学科返回 `MAPPINGS_SUBJECT_UNSUPPORTED`。
+mappings必须显式topicId；[CSV示例](examples/mappings.csv)最小列为 `topicId,grade,term`，可选unit/chapter/note，也支持同列Markdown表。
+仅支持现validator已有的数学 `cnm/*_math`、英语 `cne/*_english`；其他学科mappings明确拒绝。保留edition人教限制。
 
 ```bash
 python3 import-cli textbook --mode mappings_only --prefix cnm \
   --file import-module/examples/mappings.csv --edition importdemo_math \
-  --label '导入演示版本' --source '原创管道示例，不是真实教材对照'
+  --label '原创导入演示版本' --source '原创管道示例，不是真实教材对照'
 ```
 
-默认校验成功后自动 `approved → applied`，只更新工作区的 `data/mappings/importdemo_math.json`。
-相同 topicId 更新本次条目，其他条目保留，依据逐次保留；本次新输入必须自带 label/source。
-不会批量重写 topics 内嵌 mappings。示例不代表真实教材对齐，不应直接发布为真实对照。
-追加 `--no-auto-apply-mappings` 可要求人工审核。
+默认合法纯mappings自动applied；加 `--no-auto-apply-mappings` 要求人工审核。只更新 `data/mappings/<edition>.json`，保留其他条目和历史source，不批量重写topics内嵌mappings。示例不能作为真实版本对照发布。
 
-## 审核及运维命令
+## 文本卷
+
+```markdown
+## Q1
+topicId: cnm_001
+difficulty: standard
+type: numeric
+prompt: 负数-2的相反数是多少？
+answer: 2
+explanation: 相反数之和为零。
+verify: -(-2)
+```
+
+TXT也支持 `1.` / `1、` / `Q1` 编号块。多行字段续行保留；choice使用3–4个连续A/B/C/D选项：
 
 ```text
-python3 import-cli list [--status needs_review] [--type textbook] [--limit 100]
-python3 import-cli status <jobId>
-python3 import-cli diff <jobId>
-python3 import-cli approve <jobId> [--comment '核对意见']
-python3 import-cli reject <jobId> --reason '需补充依据'
-python3 import-cli apply <jobId>
-python3 import-cli requeue <jobId>
+choices:
+- A: -2
+- B: 0
+- C: 2
+answer: A
+```
+
+CSV列：`prompt,answer,type,difficulty,topicId,choices,explanation,verify,unordered`，可选列可省略；choices为JSON数组或分号分隔 `A:文字;B:文字;C:文字`。
+
+```bash
 python3 import-cli paper --prefix cnm --file exam.md
 ```
 
-CLI 只请求 API；成功退出 0，HTTP 业务拒绝退出 2，系统/传输错误退出 1。
-创建返回 queued 表示已落盘入队，最终状态需用 status 查询。
-paper 会保留真实 job/source 后以 `PIPELINE_NOT_IMPLEMENTED` 失败；PDF 优先返回 `OCR_REQUIRED`。
+显式挂点必须同学科；未挂点/未知点保持null，最多5条名称关键词建议写 `reports/parse.json.matches`，不自动采纳。新题始终needs_review。
+不完整块写unparsed，零题失败 `EMPTY_PAPER`。verify在受限子进程调用原核验逻辑；mismatch仍待审，但禁止apply。修正答案/表达式或删除verify后须重新审核。
+正式题号在apply锁内续号；新点号竞争机械重映射全部新增引用，映射保存于 `review/apply-intent.json.idMap`。
 
-浏览器打开 `http://127.0.0.1:8765/import-login/`，输入同一 token 后进入审核台。
-登录仅换取 8 小时的 HttpOnly/SameSite 会话，token 不存入 URL 或 localStorage。
-审核台可查看任务、原文摘要、before/after diff、完整报告，执行通过/驳回，以及批准后的 mappings apply；不提供上传和草稿编辑。
-所有业务 API 及 `/import-review/` 都必须鉴权；公开登录页不含 job 数据。
+## 审核台、修订与CLI
 
-远程运维使用 SSH 本地转发。生产部署需要独立 origin、gate、TLS，不能复用现有 SW scope；
-仅设置 no-store 不能阻止现有 SW 缓存。`--secure-cookie` 仅供完成独立 HTTPS 反代验收后启用，本次未做生产 gate 集成。
+打开独立origin `http://127.0.0.1:8765/import-login/`，token换取8小时HttpOnly/SameSite会话；token不进URL/localStorage。业务API、文件、差异与审核台均鉴权，无浏览器上传入口。
+审核台“修订完整草稿”提供五份JSON编辑，可修改题挂点/答案/依赖去留与强度/新点/课标；保存后审批失效，必须重新读取并批准。
 
-## 状态、拒绝和恢复
+```text
+python3 import-cli list [--status needs_review] [--type paper] [--limit 100]
+python3 import-cli status <jobId>
+python3 import-cli diff <jobId>
+python3 import-cli draft <jobId>                 # 返回含draft/draftSha256的一致快照
+python3 import-cli revise <jobId> --file reviewed.json --expected-digest <draftSha256> [--comment ...]
+python3 import-cli approve <jobId> [--comment ...] [--expected-digest <draftSha256>]
+python3 import-cli reject <jobId> --reason '需补充依据'
+python3 import-cli apply <jobId>
+python3 import-cli requeue <jobId>
+```
 
-- queued → running → needs_review → approved → applied；解析失败为 failed，待审可 rejected。
-- 新知识点/新题未经人工审批：`REVIEW_REQUIRED`；批准后仍因本次范围返回 `APPLY_SCOPE_UNSUPPORTED`。
-- 纯 mappings 自动审批同时检查实际草稿为空的 topics/dependencies/questions/课标建议，不信任客户端 flags。
-- 审批绑定完整 draft 摘要。变化后 apply 返回 `DRAFT_CHANGED`，归档旧决策并退回 needs_review，允许重新批准；只在确认旧 intent 尚未提交时归档它。
-- apply 在任务锁和全库锁内重新校验“正式 ∪ 草稿”；失败返回 `VALIDATION_FAILED`，保持 approved，正式文件不变。不支持覆盖率 bypass。
-- `BUSY`（HTTP 409）表示锁竞争；可稍后重试。
-- replace 前记录 `review/apply-intent.json` 的前后摘要。中断恢复时：目标为新摘要则恢复 applied，为旧摘要可安全重试，为第三种摘要则 `RECOVERY_CONFLICT` 并停止写入。
-- 若旧事务已写入而 draft 又被外部修改，恢复原草稿后再恢复状态；修订另建 job。不得用新审批覆盖未确认的提交结果。
-- 源字节只写一次，requeue 只允许 failed/rejected 重试同一源；修正源应创建新 job，手工改源返回 `SOURCE_CHANGED`。
-- applied 不再接受审批/驳回/重试，重复 apply 为只读幂等查询。完整审计位于 job 的 review/reports 下。
+revise接受完整五字段对象，或 `draft` 命令导出的快照对象。approve未指定digest时，CLI先读快照再批准该版本；并发修订返回409。HTTP approve/revise必须 `expectedDraftSha256`，旧页面不能批准新稿。
+CLI成功0，业务拒绝2，系统故障1。API根 `/import/v1`，创建POST `/jobs/textbook|paper`；GET jobs/status/diff/draft/files；POST draft/approve/reject/apply/requeue。
+错误格式 `{error,code}`。覆盖率override显式拒绝，禁止绕过现有validator。
 
-API 根为 `/import/v1`；创建为 multipart POST `/jobs/textbook|paper`；list/status/diff/files 使用 GET；
-approve/reject/apply/requeue 为 POST JSON，错误统一 `{error, code}`，校验错误附 reports 路径。
-文件读取路径限定当前 job；源内容按文本展示。最大源文件 1 MiB，请求体最大 2 MiB。
+## PDF/OCR插件
 
-## 与线上及上游的关系
+默认禁用，PDF保留job/source并 `OCR_REQUIRED`。命令仅由worker运维环境配置，上传者不能决定可执行程序。
+插件是一个JSON argv数组，系统追加 `--input <PDF> --output <临时MD> --kind textbook|paper --pages <页码>`，不使用shell。
+教材必须 `--ocr-pages 1-3,5`，最大10页；paper可省略pages（整卷），不默认OCR整本教材。
 
-apply 更新独立工作副本，**不会自动更新线上静态数据或发布 release**。
-工作区的数据交付、生产 gate/systemd、健康检查及回滚必须另行验收，见 [部署约束](../deploy/README.md)。
-保留现有 scripts/build 与 validator；新代码集中在新目录，降低同步 upstream 时的冲突。
+接口验收使用明确标识的假插件：
+
+```bash
+export IMPORT_OCR_COMMAND='["python3", "/absolute/repo/import-module/ocr_fixture.py"]'
+export IMPORT_OCR_TIMEOUT=120
+python3 import-worker
+# 在同API环境的另一终端：
+python3 import-cli textbook --mode expand --prefix cnm --file toc.pdf --ocr-pages 1-2
+python3 import-cli paper --prefix cnm --file exam.pdf
+```
+
+fixture只检查PDF标记并输出原创固定MD，**不识别PDF，不代表OCR准确率验收**。成功后只发布 `source/normalized.md`，进入与文本相同的流水线，机器内容仍须校对。
+真实引擎应在开发机用户空间安装，并提供符合上述参数的适配程序（例如PDF页渲染+中文OCR+规范化MD）。替换argv为该适配器即可；本仓库不捆绑真实OCR引擎或中文模型。无真实引擎时仍可用fixture验收接口，不能将固定输出用于真实入库。VPS unit不配置重OCR。
+`IMPORT_OCR_TIMEOUT` 默认120秒，上限600；超时终止整个插件进程组。输出必须非空普通文件、非符号链接、UTF-8、≤1MiB。成功报告保留pluginSha256/confidence=unreviewed；失败删除旧normalized，保留原PDF与错误。
+错误：`OCR_REQUIRED`、`OCR_PAGES_REQUIRED`、`OCR_CONFIG_INVALID`、`OCR_FAILED`、`OCR_TIMEOUT`、`OCR_OUTPUT_INVALID`。
+
+## 事务、失败与恢复
+
+- queued→running→needs_review→approved→applied；解析failed，待审可rejected；failed/rejected可重试同一源，改源须新job。
+- 新点/题未经人工批准 `REVIEW_REQUIRED`。审批绑定完整draft摘要；外部改动后apply `DRAFT_CHANGED` 并退回needs_review。
+- 五文件修订也有revision-intent；prepared中断时读取/批准返回 `REVISION_PENDING`，worker或API启动显式恢复旧草稿并保持待审。不会批准混合修订。
+- mappings是单文件原子replace，兼容骨架intent恢复；新点/边/题使用**可恢复多文件事务**。备份/stage及目录先fsync，再prepared；全部替换后committed是提交点；最后applied。
+- 普通故障补偿回滚；prepared进程死亡恢复旧值，committed之后恢复applied。回滚自身再次失败保留prepared，后续可重入。恢复前检查全部目标、备份和候选摘要；第三种内容/损坏备份 `RECOVERY_CONFLICT`，阻止全部新apply，不覆盖外部改动。
+- 全库锁→job锁，候选/diff/审核快照与写入互斥。GET/解析不悄悄修复正式库，未完成事务时 `TRANSACTION_PENDING`；显式apply或worker/API启动先恢复历史事务。BUSY为409，稍后重试。
+- 校验失败不写入，保持approved并更新报告。mismatch不能override；覆盖率、q1、图和学科不变量都由原validator决定。
+- 不承诺无锁外部读取者看到跨文件瞬时原子快照；workspace禁止被静态服务器或历史build并发读写。多机共享锁与非合作写者不在支持范围。
+
+## 部署与数据上线
+
+[部署说明](../deploy/README.md)提供静态发布自动回滚、独立API/worker单位与生产验收命令。
+运维默认 `ssh -N -L 18765:127.0.0.1:8765 qqvps-cd`，访问 `http://127.0.0.1:18765/import-login/`；该端口与站点SW origin隔离。
+apply只改 `/srv/cn-math-taxonomy/import-workspace/data`。上线数据须显式将审阅后的正式JSON交付Git分支、跑原validate/回归、提交并发布新release；不得复制imports/source/token到Git或静态release。

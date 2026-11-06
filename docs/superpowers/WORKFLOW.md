@@ -2,8 +2,8 @@
 
 - **日期**：2026-11-06（Asia/Shanghai）
 - **开发机**：horndalf-aipower → `~/Projects/github.com/cn-math-taxonomy`
-- **线上现状**：按 2026-11-06 任务简报，qqvps-cd 仍由工作树 + `python -m http.server` 服务；本次未连接 VPS 复核。
-- **发布目标**：`/srv/cn-math-taxonomy/current`（目录已准备，尚未切流；切换需独立验收）。
+- **线上现状**：2026-11-06 开工SSH核实仍由工作树服务；本轮执行current切流，最终现场结果以完整验收记录为准。
+- **发布目标**：`/srv/cn-math-taxonomy/current`（本轮实施，含健康检查与失败自动回滚）。
 
 ## 远程
 
@@ -39,16 +39,13 @@ git rebase main                     # 或 merge main；团队统一用一种
 
 ## 发布到 qqvps-cd
 
-1. 在开发机：功能自测通过 → 打 `deploy/qqvps-…` 标签 → `git push origin main --tags`（或推送该提交）。
-2. 在 VPS：跑 `deploy/publish-to-qqvps.sh`（见仓库 `deploy/`），发布到 `/srv/cn-math-taxonomy/releases/<id>` 并切换 `current`。
-3. nginx / systemd 配置放在机器上（仓库里只留示例），避免和服务端私有路径绑死在上游树里。
+在开发机测试通过并推送明确提交；VPS使用独立bare mirror按完整SHA发布。运行 `deploy/publish-to-qqvps.sh <SHA>`，先预检再切current+重启，HTTP/正文健康失败自动回滚；首次迁移连同旧服务配置与current存在性恢复。详见[部署说明](../../deploy/README.md)。
+共享nginx继续经gate代理127.0.0.1:8000；本轮不替换同机听写、江山、gate配置。发布记录见[完整验收](reviews/2026-11-06-import-module-completion-review.md)。
 
-静态站阶段仍可用现有 gate + `/k12-knowledge-graph/`；导入 API/worker 上线后再加独立 unit，重活优先放开发机。
+## 导入工作区与发布所有权
 
-## 导入工作区与发布的所有权
-
-- 代码属于 Git release；导入运行状态属于独立持久 `IMPORT_WORKSPACE`，目录内包含正式数据副本及 `data/imports/`，不得放到静态根、`current` 或 `releases/` 下。
-- `apply` 只更新该工作区，不触发站点发布。需将经过审阅的正式数据另行交付并发布；不得让 `git archive` 覆盖运行状态。
-- API 与审核台使用独立 loopback 端口，远程运维通过 SSH 转发；生产要求 gate + TLS 与独立 origin，避免现有 SW 缓存 job、原文和审核请求。
-- 本次只提交并推送 `feat/import-module`，不执行 main 同步、打部署标签、线上切流或生产配置修改。
-- 当前发布脚本在重启前切换 `current`，没有健康检查及失败回滚；使用前必须在独立发布任务中完善和验收，不将示例视为生产保证。
+- Git静态release、独立import-current代码指针与持久IMPORT_WORKSPACE相互分离。工作区包含正式数据副本与data/imports，不能放在静态根/current/releases下。
+- apply只更新工作区。数据上线需显式导出审阅后的正式JSON到Git交付分支，原validate/回归通过、提交后另发release；绝不复制imports/source/token。
+- API/review位于独立loopback8765+token/session；默认SSH转发到开发机独立端口，避开站点SW origin。静态release排除审核台与导入入口。重OCR不在VPS默认启用。
+- 本轮授权完整v1、OCR接口验收、生产切流及普通push origin/feat/import-module；上一轮“只骨架、不切流”属于历史范围。不得force-push或改坏同机其他站。
+- 上游validator仍是最终数据契约；导入不替代历史build。重放build前先合齐导入正式结果，禁止与apply并发写同一workspace。

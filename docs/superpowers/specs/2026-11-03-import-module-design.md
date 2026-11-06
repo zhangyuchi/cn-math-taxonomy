@@ -524,3 +524,16 @@ failed|rejected → requeue → queued
 
 具体接口、状态恢复、测试和验收见 [实现计划](../plans/2026-11-06-import-module-implementation.md)。
 
+
+## 附录 D：2026-11-06 完整交付准入（优先于附录 C 的骨架范围）
+
+本轮用户明确授权完整 v1、10.2 OCR 插件接口与 qqvps 生产切流。附录 C 的“尚未实现/本次不切流”仅为上一轮历史，不再限制本轮。原 validator/schema与数据隔离不变量继续有效。开工 advisor GO_WITH_FIXES，主代理消化下列约定后准入。
+
+1. 审核：认证 GET job 一致快照包含meta/draft/diff/reports/draftSha256；HTTP修订与批准均必填expectedDraftSha256，锁内核对，不允许旧页面批准新稿。CLI自动读取批准所见快照，UI用显示摘要。完整五文件草稿修订先持久revision-intent与before/after，再失效审批、退needs_review、写入；中断prepared回滚，读取/批准拒绝混合版本；保留历史审计。未完成apply intent禁止修订。
+2. paper：MD、编号TXT、CSV统一成现有题schema；显式题挂点必须同学科且非external；未知/null不自动选择，最多五项建议及match放parse报告，不能混入正式题字段。未完整块进入unparsed，零题失败。verify调用原核验逻辑但进程隔离、有资源/时间上限，报告仅在job；mismatch禁止apply。apply锁内分配正式点/题ID并机械重映射新增实体全部引用，记录ID映射。
+3. expand：审核台/CLI/API可修订完整草稿，补齐真实题、课标、依赖；正式standards按现有对象schema，不修改课标正文。保留全量validator，包括覆盖率、q1、图连通规则；5.3的overrideCoverage不再提供绕过，接口显式拒绝，不能仅因批准而放宽第6节。必须证明完整修订草稿能成功写topics/dependencies/questions。
+4. 事务：mappings单文件兼容旧intent；多文件是可恢复事务而非跨文件瞬时原子。全库锁→job锁；candidate/diff快照与写入互斥。备份和候选内容及目录fsync后发布prepared，全部replace后才持久committed，再写applied；普通失败补偿回滚，prepared崩溃回滚旧值，committed崩溃完成applied。恢复先验证所有目标与备份摘要，第三种摘要/损坏备份失败关闭并阻止其他apply。已终结事务不因后续合法写入重新判冲突。正式恢复仅在显式apply恢复/worker启动入口，GET/解析只拒绝未完成事务，不执行正式库修复。
+5. OCR：默认禁用OCR_REQUIRED。IMPORT_OCR_COMMAND为运维环境配置的JSON argv，非shell、不由上传者控制；参数含输入/输出路径、kind、显式pages。教材PDF必须目录页范围，否则OCR_PAGES_REQUIRED；最大目录页10页。成功输出须普通非链接UTF8、非空、≤1MiB，再发布source/normalized.md走同一文本流水线。OCR_FAILED/OCR_TIMEOUT/OCR_OUTPUT_INVALID/OCR_CONFIG_INVALID明确失败，保存原PDF/报告/插件配置标识，失败不保留旧normalized成功假象。fixture可切换证明接口，不代表真实OCR准确率；VPS默认禁用重OCR。
+6. 发布：独立bare mirror按SHA archive，排除私有job、review源及隐藏运行目录；临时端口preflight，再切current+重启+有界健康与正文hash检查。首次迁移保存原current存在性、旧unit/drop-in和运行状态，失败自动恢复并验证旧站；后续恢复旧current。API/worker使用独立代码指针、私有持久workspace与token，loopback独立端口+SSH转发满足本轮部署，不落同源SW scope。仅必要修改cn-math服务，不改共享gate/nginx/其他站。apply绝不自动发布数据；数据上线需显式Git交付与独立release。
+
+完整计划与验收映射见 [完整交付计划](../plans/2026-11-06-import-module-completion.md)。

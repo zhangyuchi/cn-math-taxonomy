@@ -1,0 +1,6 @@
+# 运维默认：不加入公开站点或 /k12-knowledge-graph/ 的任何location。
+# API自身监听127.0.0.1:8765并鉴权；通过SSH独立端口转发访问。
+# ssh -N -L 18765:127.0.0.1:8765 qqvps-cd
+# 浏览器：http://127.0.0.1:18765/import-login/
+# 如另行开放公网，须独立TLS origin + gate，仍保留API token/session鉴权。
+# 禁止复制到现有同源SW scope下；no-store不能代替origin隔离。

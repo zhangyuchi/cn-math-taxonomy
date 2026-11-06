@@ -5,8 +5,12 @@ import os
 from pathlib import Path
 import time
 
-from .apply import apply_job
+from .apply import apply_job, recover_pending
 from .parsers import parse_textbook
+from .paper import parse_paper
+from .ocr import normalize_pdf
+from .verification import verify_questions
+from .transactions import assert_clean
 from .store import (DRAFT_NAMES, JOB_RE, ImportErrorResponse, Service, atomic_bytes,
                     atomic_json, file_lock, read_json)
 from .validation import validate_candidate
@@ -31,17 +35,41 @@ def _recover_queue(service):
         if meta['status'] == 'approved':
             decision_path = directory / 'review/decision.json'
             automatic = decision_path.exists() and read_json(decision_path).get('actor') == 'system:auto-mappings'
-            if (directory / 'review/apply-intent.json').exists() or automatic:
+            if automatic:
                 try:
                     apply_job(service, directory.name)
                 except ImportErrorResponse as exc:
                     LOG.warning('恢复 apply %s：%s', directory.name, exc.code)
 
 
+def write_reports(service, job_id, draft, parse_details=None):
+    """只写job报告；调用方持全库/job锁，正式快照不会混入部分事务。"""
+    directory = service.job_dir(job_id)
+    parse = dict(ok=True, counts={name: len(value.get('entries', [])) if isinstance(value, dict)
+                 else len(value) for name, value in draft.items()},
+                 warnings=['机器生成草稿，无教师背书；目录顺序和挂点建议均须审核'], unparsed=[])
+    parse.update(parse_details or {})
+    atomic_json(directory / 'reports/parse.json', parse)
+    verify = verify_questions(draft['questions'])
+    atomic_json(directory / 'reports/verify.json', verify)
+    questions = read_json(service.data / 'questions.json') + draft['questions']
+    affected = {t['id'] for t in draft['topics']} | {q.get('topicId') for q in draft['questions']}
+    coverage = []
+    for tid in sorted(t for t in affected if isinstance(t, str)):
+        qs = [q for q in questions if q.get('topicId') == tid]
+        if len(qs) < 3 or not {'basic', 'standard'} <= {q.get('difficulty') for q in qs}:
+            coverage.append(tid)
+    atomic_json(directory / 'reports/coverage.json', dict(needs_more=coverage,
+                unresolved=sum(q.get('topicId') is None for q in draft['questions']),
+                note='完整validator另行检查覆盖率、q1、图和学科约束；禁止override绕过'))
+    return validate_candidate(service, job_id)
+
+
 def _process(service, job_id):
-    """生成完整草稿/报告；PDF 和未实现 paper 明确失败且原始字节保留。"""
+    """文本/OCR进入同一草稿管道；解析只写job，新点/题必须人工审核。"""
     automatic = False
-    with file_lock(service.job_dir(job_id) / '.lock'):
+    with file_lock(service.imports / '_apply.lock'), file_lock(service.job_dir(job_id) / '.lock'):
+        assert_clean(service)
         meta = service.get(job_id)
         if meta['status'] != 'queued':
             return
@@ -50,23 +78,21 @@ def _process(service, job_id):
         directory = service.job_dir(job_id)
         try:
             content = service.source(job_id)
-            if meta['sourceFiles'][0].endswith('.pdf'):
-                raise ImportErrorResponse('OCR_REQUIRED', '请先导出目录文本，或待 v1.1 OCR')
+            pdf = meta['sourceFiles'][0].endswith('.pdf')
+            if pdf:
+                content = normalize_pdf(service, meta)
             if meta['type'] == 'paper':
-                raise ImportErrorResponse('PIPELINE_NOT_IMPLEMENTED', '本次骨架尚未实现文本卷解析；原文已保留')
-            text, draft = parse_textbook(service, meta, content)
+                text, draft, details = parse_paper(service, meta, content, '.md' if pdf else None)
+            else:
+                # OCR统一生成Markdown，不按原PDF后缀尝试解析二进制。
+                parsed_meta = dict(meta, sourceFiles=['source/normalized.md']) if pdf else meta
+                text, draft = parse_textbook(service, parsed_meta, content)
+                details = {}
             atomic_bytes(directory / 'source/normalized.md', text.encode())
             for name in DRAFT_NAMES:
                 atomic_json(directory / 'draft' / (name + '.json'), draft[name])
-            atomic_json(directory / 'reports/parse.json', dict(ok=True, counts={name: len(value.get('entries', []))
-                        if isinstance(value, dict) else len(value) for name, value in draft.items()},
-                        warnings=['机器生成草稿，无教师背书；domain/目录顺序仅为待审建议'] if draft['topics'] else [], unparsed=[]))
-            atomic_json(directory / 'reports/verify.json', dict(status='not_applicable',
-                        reason='本次骨架不解析新题，不调用会写正式 verification_report 的默认入口', mismatch=[]))
-            atomic_json(directory / 'reports/coverage.json', dict(needs_more=[t['id'] for t in draft['topics']],
-                        note='正式覆盖率、难度和 q1 约束由完整 validator 报告'))
-            report = validate_candidate(service, job_id)
-            if meta['mode'] == 'mappings_only' and report['ok'] and meta['flags']['autoApplyMappings']:
+            report = write_reports(service, job_id, draft, details)
+            if service.mappings_only(job_id) and report['ok'] and meta['flags']['autoApplyMappings']:
                 service._approve_locked(job_id, automatic=True)
                 automatic = True
             else:
@@ -81,12 +107,13 @@ def _process(service, job_id):
         try:
             apply_job(service, job_id)
         except ImportErrorResponse as exc:
-            LOG.warning('自动 apply %s 被拒绝：%s', job_id, exc.code)
+            LOG.warning('自动apply %s被拒绝：%s', job_id, exc.code)
 
 
 def run_once(service):
     """消费至多一个 job；全程 worker 独占，启动时恢复持久状态。"""
     with file_lock(service.imports / '_worker.lock'):
+        recover_pending(service)
         _recover_queue(service)
         queue = service.imports / '_queue'
         for marker in sorted(queue.iterdir()):
@@ -113,7 +140,12 @@ def main():
     try:
         service = Service(args.workspace)
         while True:
-            run_once(service)
+            try:
+                run_once(service)
+            except ImportErrorResponse as exc:
+                if exc.code != 'BUSY' or args.once:
+                    raise
+                LOG.info('工作区忙，保留队列稍后重试')
             if args.once:
                 return 0
             time.sleep(0.5)

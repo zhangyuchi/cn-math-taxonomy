@@ -1,5 +1,7 @@
 # 导入模块 v1 骨架实现计划
 
+> 本文保留上一轮骨架的历史范围与结果。本轮完整v1/OCR/生产切流见[完整计划](../plans/2026-11-06-import-module-completion.md)和[完整验收](../reviews/2026-11-06-import-module-completion-review.md)。
+
 - Task Mode：design-build；Outcome Status：complete（本次骨架的实现、验收与独立复核；Git 交付结果见最终回复）。
 - 准入：advisor 最终结论 `GO_WITH_FIXES`；主代理核查后接受 B1–B6，已写入规格附录 C、WORKFLOW 与 deploy/README，阻塞约定已闭合。
 - 权威：11 月 6 日任务简报与修订规格；原规格完整 v1 是后续目标。

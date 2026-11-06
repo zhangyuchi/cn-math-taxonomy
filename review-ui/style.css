@@ -56,3 +56,6 @@ pre { background: #eaece4; border-left: 2px solid var(--line); padding: 15px; fo
 #login-error { min-height: 1.7em; margin-top: 10px; font-size: 12px; }
 [hidden] { display: none !important; }
 @media (max-width: 780px) { .workspace { grid-template-columns: 1fr; } .job-panel { border-right: 0; border-bottom: 1px solid var(--line); } .job-list { max-height: 235px; overflow: auto; } .detail-panel { padding: 25px 20px; } h1 { font-size: 28px; } .header-note { display: none; } .empty { padding-top: 20px; } }
+
+#draft-editor { width: 100%; box-sizing: border-box; font-family: ui-monospace, monospace; font-size: 13px; line-height: 1.5; }
+#draft-digest { overflow-wrap: anywhere; }

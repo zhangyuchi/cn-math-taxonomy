@@ -1,4 +1,4 @@
-"""仅支持经过审批和完整校验的 mappings 单文件事务。"""
+"""经审批和完整校验后应用；兼容单文件mappings与可恢复多文件扩库事务。"""
 from pathlib import Path
 import re
 import uuid
@@ -48,24 +48,68 @@ def _retire_uncommitted_intent(service, meta, decision):
     sync_directory(path.parent)
 
 
-def apply_job(service, job_id):
-    """按任务锁→全库锁顺序应用；任何审批/校验拒绝均不修改正式库。
+def _recover_legacy(service, job_id, intent, keep_unwritten=False):
+    """兼容骨架单文件intent；新摘要完成状态，旧摘要安全归档，第三值停止。"""
+    relative = intent.get('target')
+    if (intent.get('jobId') != job_id or not isinstance(relative, str)
+            or not re.fullmatch(r'mappings/[a-z][a-z0-9_]*\.json', relative)):
+        raise ImportErrorResponse('RECOVERY_CONFLICT', '历史单文件事务记录不合法', 409)
+    actual = _target_digest(service.data / relative)
+    if actual == intent['afterSha256']:
+        decision = read_json(service.job_dir(job_id) / 'review/decision.json')
+        if decision.get('draftSha256') != intent.get('draftSha256') or service.draft_digest(job_id) != intent.get('draftSha256'):
+            raise ImportErrorResponse('RECOVERY_CONFLICT', '原审批已写入但草稿变化，请先恢复原草稿', 409)
+        return _finish(service, service.get(job_id), intent)
+    if actual != intent['beforeSha256']:
+        raise ImportErrorResponse('RECOVERY_CONFLICT', '历史事务目标出现第三种摘要', 409)
+    if not keep_unwritten:
+        path = service.job_dir(job_id) / 'review/apply-intent.json'
+        atomic_json(path.with_name('aborted-' + uuid.uuid4().hex + '.json'), intent)
+        path.unlink()
+        sync_directory(path.parent)
 
-    仅单文件替换具有原子性。先持久化 intent，再 replace，最后写 applied。
-    中断后用目标摘要识别已提交结果；目标既非旧值也非新值则拒绝恢复。
+
+def recover_all_locked(service, current_job=None):
+    """显式恢复入口；调用方只持全库锁，逐个获取job锁避免反向加锁。"""
+    from .transactions import unfinished, recover
+    from .revision import pending, recover_locked
+    from .store import JOB_RE
+    for directory in sorted(service.imports.iterdir()):
+        if JOB_RE.fullmatch(directory.name) and pending(service, directory.name):
+            with file_lock(directory / '.lock'):
+                recover_locked(service, directory.name)
+    for job_id, intent in unfinished(service):
+        with file_lock(service.job_dir(job_id) / '.lock'):
+            if intent.get('version') == 2:
+                recover(service, job_id, intent)
+            else:
+                _recover_legacy(service, job_id, intent, keep_unwritten=job_id == current_job)
+
+
+def recover_pending(service):
+    """worker启动/运维显式恢复所有事务；GET不调用此写入入口。"""
+    with file_lock(service.imports / '_apply.lock'):
+        recover_all_locked(service)
+
+
+def apply_job(service, job_id):
+    """全库锁→恢复历史事务→任务锁→核准快照→验证→提交。
+
+    新点/题始终要求人工审批；单文件mappings沿用兼容路径，其他内容使用
+    持久prepared/committed多文件事务。恢复歧义阻止全部新apply。
     """
-    with file_lock(service.job_dir(job_id) / '.lock'):
-        meta = service.get(job_id)
-        if meta['status'] == 'applied':
-            return meta
-        if meta['status'] != 'approved':
-            raise ImportErrorResponse('REVIEW_REQUIRED', '必须先经人工批准或合法 mappings 自动批准', 409)
-        with file_lock(service.imports / '_apply.lock'):
+    with file_lock(service.imports / '_apply.lock'):
+        recover_all_locked(service, job_id)
+        with file_lock(service.job_dir(job_id) / '.lock'):
+            meta = service.get(job_id)
+            if meta['status'] == 'applied':
+                return meta
+            if meta['status'] != 'approved':
+                raise ImportErrorResponse('REVIEW_REQUIRED', '必须先经人工批准或合法mappings自动批准', 409)
             try:
                 return _apply_locked(service, meta)
             except ImportErrorResponse as exc:
                 if exc.code == 'DRAFT_CHANGED':
-                    # 摘要变化必须重新进入可审批状态，保留失效决策供审计。
                     decision = service.job_dir(job_id) / 'review/decision.json'
                     if decision.exists():
                         atomic_bytes(decision.with_name('stale-' + uuid.uuid4().hex[:8] + '.json'), decision.read_bytes())
@@ -76,43 +120,57 @@ def apply_job(service, job_id):
 
 
 def _apply_locked(service, meta):
-    """锁内重新读取源、审批与当前正式库，不信任 flags 或旧校验成功报告。"""
+    """一次读取草稿并核对审批；候选构造不重新读取另一版草稿。"""
+    from .transactions import execute
+    from .verification import verify_questions
+    from .store import json_bytes
     job_id = meta['jobId']
     service.source(job_id)
+    draft = service.draft(job_id)
+    draft_hash = digest_bytes(json_bytes(draft))
     decision_path = service.job_dir(job_id) / 'review/decision.json'
     if not decision_path.exists():
         raise ImportErrorResponse('REVIEW_REQUIRED', '缺少审批记录', 409)
     decision = read_json(decision_path)
-    if decision.get('decision') != 'approve' or decision.get('draftSha256') != service.draft_digest(job_id):
+    if decision.get('decision') != 'approve' or decision.get('draftSha256') != draft_hash:
         _retire_uncommitted_intent(service, meta, decision)
         raise ImportErrorResponse('DRAFT_CHANGED', '草稿与审批摘要不一致，须重新提交审核', 409)
-    if not service.mappings_only(job_id):
-        raise ImportErrorResponse('APPLY_SCOPE_UNSUPPORTED', '本次骨架仅可应用纯 mappings；新点/边/题仍需完整事务实现', 409)
-    if decision.get('actor') not in ('ops', 'system:auto-mappings'):
-        raise ImportErrorResponse('REVIEW_REQUIRED', '未知审批主体', 409)
-    target_relative = mapping_target(meta, service.draft(job_id)['mappings'])
-    target = service.data / target_relative
+    pure_mapping = (meta['type'] == 'textbook' and meta['mode'] == 'mappings_only'
+                    and all(draft[n] == [] for n in ('topics', 'dependencies', 'questions', 'standards_suggestions'))
+                    and bool(draft['mappings']))
+    if decision.get('actor') != 'ops' and not (decision.get('actor') == 'system:auto-mappings' and pure_mapping):
+        raise ImportErrorResponse('REVIEW_REQUIRED', '新点/边/题必须经人工审批', 409)
+    # 兼容旧单文件intent，当前草稿已核准，未写入时允许重新验证后安全重试。
     intent_path = service.job_dir(job_id) / 'review/apply-intent.json'
     if intent_path.exists():
-        intent = read_json(intent_path)
-        if (intent.get('jobId') != job_id or intent.get('target') != target_relative
-                or intent.get('draftSha256') != decision['draftSha256']):
-            raise ImportErrorResponse('RECOVERY_CONFLICT', '事务意图与本次审批不一致', 409)
-        actual = _target_digest(target)
-        if actual == intent['afterSha256']:
-            return _finish(service, meta, intent)
-        if actual != intent['beforeSha256']:
-            raise ImportErrorResponse('RECOVERY_CONFLICT', '目标既非事务旧值也非新值，停止恢复', 409)
-    with candidate(service, job_id) as (root, relative):
+        old = read_json(intent_path)
+        if old.get('version') != 2:
+            relative = mapping_target(meta, draft['mappings'])
+            if old.get('target') != relative or old.get('draftSha256') != draft_hash:
+                raise ImportErrorResponse('RECOVERY_CONFLICT', '历史intent与审批不一致', 409)
+            if _target_digest(service.data / relative) == old['afterSha256']:
+                return _finish(service, meta, old)
+    with candidate(service, job_id, draft) as (root, prepared):
+        verify = verify_questions(prepared['draft']['questions'])
+        atomic_json(service.job_dir(job_id) / 'reports/verify.json', verify)
+        if verify['mismatch']:
+            raise ImportErrorResponse('VERIFY_MISMATCH', '存在核验不符的题目，须修正并重新审核')
         report = validate_root(root)
         report['phase'] = 'apply'
         atomic_json(service.job_dir(job_id) / 'reports/validate.json', report)
         if not report['ok']:
-            raise ImportErrorResponse('VALIDATION_FAILED', '合并候选未通过完整校验，详见 reports/validate.json')
-        content = (Path(root) / 'data' / relative).read_bytes()
-        intent = dict(jobId=job_id, target=relative, beforeSha256=_target_digest(target),
-                      afterSha256=digest_bytes(content), draftSha256=decision['draftSha256'],
-                      preparedAt=now().isoformat(timespec='seconds'))
-        atomic_json(intent_path, intent)
-        atomic_bytes(target, content)
-        return _finish(service, meta, intent)
+            raise ImportErrorResponse('VALIDATION_FAILED', '合并候选未通过完整校验，详见reports/validate.json')
+        targets = prepared['targets']
+        if not targets:
+            raise ImportErrorResponse('INVALID_DRAFT', '草稿没有可应用内容')
+        if pure_mapping:
+            relative = targets[0]
+            target = service.data / relative
+            content = (Path(root) / 'data' / relative).read_bytes()
+            intent = dict(jobId=job_id, target=relative, beforeSha256=_target_digest(target),
+                          afterSha256=digest_bytes(content), draftSha256=draft_hash,
+                          preparedAt=now().isoformat(timespec='seconds'))
+            atomic_json(intent_path, intent)
+            atomic_bytes(target, content)
+            return _finish(service, meta, intent)
+        return execute(service, meta, root, targets, draft_hash, prepared['idMap'])

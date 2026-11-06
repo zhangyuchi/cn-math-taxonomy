@@ -1,6 +1,7 @@
 """在隔离数据副本与子进程中调用现有 validator，保持上游规则不变。"""
 import argparse
 import contextlib
+import copy
 import io
 import json
 import os
@@ -11,7 +12,7 @@ import subprocess
 import sys
 import tempfile
 
-from .store import CODE_ROOT, ImportErrorResponse, atomic_json, read_json
+from .store import CODE_ROOT, SUBJECTS, DRAFT_NAMES, ImportErrorResponse, atomic_json, read_json
 
 FORMAL_FILES = ('topics.json', 'dependencies.json', 'questions.json',
                 'cn-curriculum-standards.json', 'id-aliases.json')
@@ -57,10 +58,83 @@ def merged_mapping(current, incoming):
     return result
 
 
+def prepared_draft(service, meta, draft):
+    """在全库锁内为一次草稿快照续号，仅重映射新增实体及其引用。
+
+    不覆盖已有topic/question；机器建议保留报告，正式候选只允许现有题字段。
+    返回候选草稿和可审计ID映射，parse与apply均使用同一规则。
+    """
+    if (not isinstance(draft, dict) or set(draft) != set(DRAFT_NAMES) or
+            any(not isinstance(draft[n], list) for n in DRAFT_NAMES if n != 'mappings') or
+            not isinstance(draft['mappings'], dict)):
+        raise ImportErrorResponse('INVALID_DRAFT', '草稿必须包含约定的五份JSON')
+    if meta['mode'] == 'mappings_only' and any(draft[n] for n in DRAFT_NAMES if n != 'mappings'):
+        raise ImportErrorResponse('INVALID_DRAFT', 'mappings_only不能混入点、边、题或课标建议')
+    result = copy.deepcopy(draft)
+    prefix = meta['subjectPrefix']
+    topics = read_json(service.data / 'topics.json')
+    index = {t['id']: t for t in topics}
+    remap, counters = {}, {}
+    for topic in result['topics']:
+        if not isinstance(topic, dict) or not isinstance(topic.get('id'), str) or topic['id'] in remap:
+            raise ImportErrorResponse('INVALID_DRAFT', '新增点需要唯一id')
+        original = topic['id']
+        grade = topic.get('grade')
+        stems = [stem for low, high, stem in SUBJECTS[prefix]['stages']
+                 if isinstance(grade, int) and not isinstance(grade, bool) and low <= grade <= high]
+        if not stems or not re.fullmatch(re.escape(stems[0]) + r'\d{3,}', original):
+            raise ImportErrorResponse('INVALID_DRAFT', '新点id与任务学科/学段不一致')
+        stem = stems[0]
+        if stem not in counters:
+            counters[stem] = max((int(t['id'][len(stem):]) for t in topics
+                                 if re.fullmatch(re.escape(stem)+r'\d{3,}', t['id'])), default=0)
+        counters[stem] += 1
+        topic['id'] = stem + f'{counters[stem]:03d}'
+        remap[original] = topic['id']
+        index[topic['id']] = topic
+    for topic in result['topics']:
+        if isinstance(topic.get('mathLinks'), list):
+            topic['mathLinks'] = [remap.get(tid, tid) for tid in topic['mathLinks']]
+    for edge in result['dependencies']:
+        if not isinstance(edge, dict):
+            raise ImportErrorResponse('INVALID_DRAFT', '依赖须为对象')
+        for key in ('topicId', 'prerequisiteId'):
+            edge[key] = remap.get(edge.get(key), edge.get(key))
+    for suggestion in result['standards_suggestions']:
+        if not isinstance(suggestion, dict):
+            raise ImportErrorResponse('INVALID_DRAFT', '课标建议须为对象')
+        suggestion['topicId'] = remap.get(suggestion.get('topicId'), suggestion.get('topicId'))
+    questions = read_json(service.data / 'questions.json')
+    q_counters = {}
+    for q in questions:
+        match = re.fullmatch(re.escape(q['topicId']) + r'_q(\d+)', q['id'])
+        if match:
+            q_counters[q['topicId']] = max(q_counters.get(q['topicId'], 0), int(match[1]))
+    seen = set()
+    for question in result['questions']:
+        if not isinstance(question, dict) or not isinstance(question.get('id'), str) or question['id'] in seen:
+            raise ImportErrorResponse('INVALID_DRAFT', '题目须为含唯一id的对象')
+        seen.add(question['id'])
+        tid = question.get('topicId')
+        if tid is None:
+            raise ImportErrorResponse('TOPIC_ID_REQUIRED', '请审核并指定每题topicId')
+        if not isinstance(tid, str) or not tid.startswith(prefix + '_'):
+            raise ImportErrorResponse('SUBJECT_CONFLICT', '题目挂点与任务学科冲突')
+        tid = remap.get(tid, tid)
+        if tid not in index or index[tid].get('external'):
+            raise ImportErrorResponse('INVALID_DRAFT', '题目必须挂到存在的正式非external点')
+        q_counters[tid] = q_counters.get(tid, 0)+1
+        old = question['id']
+        question.update(id=tid+'_q'+str(q_counters[tid]), topicId=tid)
+        remap[old] = question['id']
+    return result, remap
+
+
 @contextlib.contextmanager
-def candidate(service, job_id):
-    """复制正式快照并合并草稿；临时目录退出时删除，不接触正式文件。"""
-    draft, meta = service.draft(job_id), service.get(job_id)
+def candidate(service, job_id, draft=None):
+    """调用方持全库锁；复制快照并合并一次核准草稿，不接触正式文件。"""
+    meta = service.get(job_id)
+    draft, remap = prepared_draft(service, meta, service.draft(job_id) if draft is None else draft)
     with tempfile.TemporaryDirectory(prefix='_candidate-', dir=service.imports) as temporary:
         root = Path(temporary)
         data = root / 'data'
@@ -68,18 +142,19 @@ def candidate(service, job_id):
         for name in FORMAL_FILES:
             shutil.copy2(service.data / name, data / name)
         shutil.copytree(service.data / 'mappings', data / 'mappings')
+        targets = []
         for name in ('topics', 'dependencies', 'questions'):
-            if not isinstance(draft[name], list):
-                raise ImportErrorResponse('INVALID_DRAFT', name + ' 必须为数组')
             if draft[name]:
-                atomic_json(data / (name + '.json'), read_json(data / (name + '.json')) + draft[name])
-        target = None
+                target = name + '.json'
+                atomic_json(data / target, read_json(data / target) + draft[name])
+                targets.append(target)
         if draft['mappings']:
             target = mapping_target(meta, draft['mappings'])
             path = data / target
             existing = read_json(path) if path.exists() else None
             atomic_json(path, merged_mapping(existing, draft['mappings']))
-        yield root, target
+            targets.append(target)
+        yield root, dict(targets=targets, idMap=remap, draft=draft)
 
 
 def validate_candidate(service, job_id, phase='parse'):

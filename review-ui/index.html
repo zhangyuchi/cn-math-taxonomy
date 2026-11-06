@@ -11,7 +11,7 @@
     <div><p class="eyebrow">CN MATH TAXONOMY / IMPORT</p><h1>导入审核台</h1></div>
     <div class="header-note">运维工作区<br><span>机器草稿 · 人工门闸</span></div>
   </header>
-  <div class="notice" role="note">内容可能由 AI / 机器生成，无教师背书。新知识点与新题必须人工确认；本次骨架仅支持 mappings 应用。</div>
+  <div class="notice" role="note">内容可能由 AI / 机器生成，无教师背书。新知识点与新题必须人工确认，入库前仍须通过完整校验。</div>
   <main class="workspace">
     <aside class="job-panel" aria-label="导入任务">
       <div class="panel-title"><h2>任务记录</h2><button id="refresh" class="quiet" type="button">刷新</button></div>
@@ -33,10 +33,16 @@
         <section class="review-actions" aria-label="审核决定">
           <label for="comment">审核评论 / 驳回原因</label>
           <textarea id="comment" rows="2" placeholder="驳回必须填写原因；通过前请核对原文与差异。"></textarea>
-          <div class="action-row"><button id="approve" type="button">通过审核</button><button id="reject" type="button" class="danger">驳回</button><button id="apply" type="button" class="quiet">应用 mappings</button></div>
-          <p class="footnote">通过只记录审批。校验失败不能入库；目录扩点的多文件应用、题目及课标编辑尚未提供。</p>
+          <div class="action-row"><button id="approve" type="button">通过审核</button><button id="reject" type="button" class="danger">驳回</button><button id="apply" type="button" class="quiet">应用到工作副本</button></div>
+          <p class="footnote">通过绑定当前显示的草稿版本。修订后须重新批准；校验或答案核验失败不能入库。apply不会自动发布线上数据。</p>
         </section>
         <details open><summary>源文本预览 <span>最多 64 KiB</span></summary><pre id="source"></pre></details>
+        <details><summary>修订完整草稿</summary>
+          <p class="footnote">在下方 JSON 中校对题干/答案与 topicId；补齐新点、依赖去留/强度及已有课标 standards 对象。课标建议仅供参考，不自动挂靠。保存后审批失效，须重新审核。覆盖率不能绕过。</p>
+          <label for="draft-editor">五份草稿 JSON</label><textarea id="draft-editor" rows="22" spellcheck="false"></textarea>
+          <p class="footnote">所见版本：<code id="draft-digest"></code></p>
+          <button id="save-draft" type="button">保存修订并重新送审</button>
+        </details>
         <details open><summary>草稿差异 <span>相对当前正式工作副本</span></summary><pre id="diff"></pre></details>
         <details><summary>完整校验与解析报告</summary><pre id="reports"></pre></details>
       </div>

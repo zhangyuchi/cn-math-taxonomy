@@ -590,6 +590,11 @@ python3 -m http.server 8000
 3. 用真实学生答题数据校准诊断题与先修强度。
 
 
+## 教材与试卷导入（运维）
+
+[导入模块](import-module/README.md)支持教材TOC、版本对照、文本卷及可开关OCR接口。新点/题经草稿修订、人工批准和完整校验后才能应用到独立工作副本；apply不会自动更新静态站。
+[qqvps部署说明](deploy/README.md)提供current发布、健康检查/失败回滚及独立端口鉴权审核台；原文与任务记录不进入公开静态根。
+
 ## 部署（Cloudflare Pages）
 
 生产站点：https://math.pansgo.com/ （Pages 项目 `cn-math-taxonomy`，备用 https://cn-math-taxonomy.pages.dev/）。

@@ -27,7 +27,7 @@ def _multipart(content_type, body):
     if not message.is_multipart() or message.defects:
         raise ImportErrorResponse('INVALID_MULTIPART', '需要合法 multipart/form-data', 400)
     params, filename, content = {}, None, None
-    allowed = {'mode', 'subjectPrefix', 'edition', 'grade', 'term', 'domain', 'label', 'source', 'autoApplyMappings'}
+    allowed = {'mode', 'subjectPrefix', 'edition', 'grade', 'term', 'domain', 'label', 'source', 'autoApplyMappings', 'ocrPages'}
     for part in message.iter_parts():
         name = part.get_param('name', header='content-disposition')
         if name == 'file':
@@ -170,12 +170,10 @@ def make_server(service, token, port=8765, secure_cookie=False):
             job_id, _, action = remaining.partition('/')
             if method == 'GET':
                 if not action:
-                    meta = service.get(job_id)
-                    meta['reports'] = {name: read_json(service.job_dir(job_id) / 'reports' / (name + '.json'))
-                                       for name in ('validate', 'verify', 'parse', 'coverage')}
-                    source = service.read_file(job_id, meta['sourceFiles'][0])
-                    meta['sourcePreview'] = source[:65536].decode('utf-8', errors='replace') if not meta['sourceFiles'][0].endswith('.pdf') else 'PDF 原文已保留；OCR 未启用'
-                    self.send_json(200, meta)
+                    self.send_json(200, service.snapshot(job_id))
+                    return
+                if action == 'draft':
+                    self.send_json(200, service.snapshot(job_id))
                     return
                 if action == 'diff':
                     self.send_json(200, service.diff(job_id))
@@ -189,15 +187,20 @@ def make_server(service, token, port=8765, secure_cookie=False):
                 data = json.loads(self.body() or b'{}')
                 if not isinstance(data, dict):
                     raise ImportErrorResponse('INVALID_BODY', '请求体必须为对象', 400)
-                allowed = {'approve': {'comment'}, 'reject': {'reason'}, 'apply': set(), 'requeue': set()}
+                allowed = {'approve': {'comment', 'expectedDraftSha256'}, 'draft': {'draft', 'expectedDraftSha256', 'comment'},
+                           'reject': {'reason'}, 'apply': set(), 'requeue': set()}
                 if action not in allowed:
                     raise ImportErrorResponse('NOT_FOUND', '操作不存在', 404)
                 if set(data) - allowed[action]:
                     raise ImportErrorResponse('INVALID_FIELD', '不支持的审核字段（覆盖率不能绕过正式校验）', 400)
-                if any(not isinstance(value, str) for value in data.values()):
-                    raise ImportErrorResponse('INVALID_FIELD', '评论与原因必须为字符串', 400)
+                if any(not isinstance(value, str) for key, value in data.items() if key != 'draft'):
+                    raise ImportErrorResponse('INVALID_FIELD', '评论、原因与摘要必须为字符串', 400)
+                if action in ('approve', 'draft') and not data.get('expectedDraftSha256'):
+                    raise ImportErrorResponse('DRAFT_DIGEST_REQUIRED', '必须携带审核所见expectedDraftSha256', 400)
                 if action == 'approve':
-                    result = service.approve(job_id, data.get('comment', ''))
+                    result = service.approve(job_id, data.get('comment', ''), expected_digest=data['expectedDraftSha256'])
+                elif action == 'draft':
+                    result = service.revise(job_id, data.get('draft'), data['expectedDraftSha256'], data.get('comment', ''))
                 elif action == 'reject':
                     result = service.reject(job_id, data.get('reason', ''))
                 elif action == 'requeue':
@@ -245,7 +248,10 @@ def main():
         parser.error('必须设置 IMPORT_WORKSPACE 或 --workspace')
     logging.basicConfig(level=logging.INFO)
     try:
-        server = make_server(Service(args.workspace), os.environ.get('IMPORT_TOKEN'), args.port, args.secure_cookie)
+        service = Service(args.workspace)
+        from .apply import recover_pending
+        recover_pending(service)
+        server = make_server(service, os.environ.get('IMPORT_TOKEN'), args.port, args.secure_cookie)
         logging.info('import-api 仅监听 127.0.0.1:%s', server.server_port)
         try:
             server.serve_forever()

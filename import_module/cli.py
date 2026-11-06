@@ -43,6 +43,7 @@ def main(argv=None):
         sub.add_argument('--prefix', required=True)
         sub.add_argument('--file', type=Path, required=True)
         sub.add_argument('--grade', type=int)
+        sub.add_argument('--ocr-pages', help='教材PDF必须显式限定目录页，如1-3,5')
         sub.add_argument('--term', choices=('上', '下', '全'))
         if kind == 'textbook':
             sub.add_argument('--mode', required=True, choices=('expand', 'mappings_only'))
@@ -55,10 +56,15 @@ def main(argv=None):
     listing.add_argument('--status')
     listing.add_argument('--type', choices=('textbook', 'paper'))
     listing.add_argument('--limit', type=int, default=100)
-    for action in ('status', 'diff', 'approve', 'reject', 'apply', 'requeue'):
+    for action in ('status', 'diff', 'draft', 'revise', 'approve', 'reject', 'apply', 'requeue'):
         sub = commands.add_parser(action)
         sub.add_argument('jobId')
         if action == 'approve':
+            sub.add_argument('--comment', default='')
+            sub.add_argument('--expected-digest')
+        if action == 'revise':
+            sub.add_argument('--file', type=Path, required=True)
+            sub.add_argument('--expected-digest', required=True)
             sub.add_argument('--comment', default='')
         if action == 'reject':
             sub.add_argument('--reason', required=True)
@@ -75,7 +81,7 @@ def main(argv=None):
         method, body, content_type = 'GET', None, 'application/json'
         endpoint = '/import/v1/jobs'
         if args.command in ('textbook', 'paper'):
-            params = {'subjectPrefix': args.prefix, 'grade': args.grade, 'term': args.term}
+            params = {'subjectPrefix': args.prefix, 'grade': args.grade, 'term': args.term, 'ocrPages': args.ocr_pages}
             if args.command == 'textbook':
                 params.update(mode=args.mode, edition=args.edition, label=args.label, source=args.source,
                               domain=args.domain, autoApplyMappings=not args.no_auto_apply_mappings)
@@ -88,10 +94,24 @@ def main(argv=None):
         else:
             endpoint += '/' + quote(args.jobId, safe='')
             if args.command != 'status':
-                endpoint += '/' + args.command
-            if args.command in ('approve', 'reject', 'apply', 'requeue'):
+                endpoint += '/' + ('draft' if args.command == 'revise' else args.command)
+            if args.command in ('approve', 'revise', 'reject', 'apply', 'requeue'):
                 method = 'POST'
                 data = {'comment': args.comment} if args.command == 'approve' else {'reason': args.reason} if args.command == 'reject' else {}
+                if args.command == 'approve':
+                    expected = args.expected_digest
+                    if expected is None:
+                        # CLI同样以实际读取快照作为所见版本，竞态由服务端409拒绝。
+                        snapshot_request = Request(base + '/import/v1/jobs/' + quote(args.jobId, safe=''),
+                                                   headers={'Authorization': 'Bearer ' + token})
+                        local = parsed.hostname in ('127.0.0.1', 'localhost', '::1')
+                        reader = build_opener(ProxyHandler({}) if local else ProxyHandler(), NoRedirect())
+                        with reader.open(snapshot_request, timeout=90) as response:
+                            expected = json.load(response)['draftSha256']
+                    data['expectedDraftSha256'] = expected
+                elif args.command == 'revise':
+                    draft = json.loads(args.file.read_text(encoding='utf-8'))
+                    data = dict(draft=draft.get('draft', draft), expectedDraftSha256=args.expected_digest, comment=args.comment)
                 body = json.dumps(data, ensure_ascii=False).encode()
         request = Request(base + endpoint, body, method=method,
                           headers={'Authorization': 'Bearer ' + token, 'Content-Type': content_type})
