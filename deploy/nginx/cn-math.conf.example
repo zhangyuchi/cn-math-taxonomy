@@ -1,0 +1,13 @@
+# 示例：与线上 /etc/nginx/snippets/cn-math.conf 对齐时可改为 alias 静态目录，
+# 或继续 proxy_pass 到 127.0.0.1:8000。机器私有路径不要硬编码进上游业务文件。
+location = /k12-knowledge-graph {
+    return 301 /k12-knowledge-graph/;
+}
+
+location /k12-knowledge-graph/ {
+    include /etc/nginx/snippets/gate-protect.conf;
+    proxy_pass http://127.0.0.1:8000/;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_redirect ~^(/.*)$ /k12-knowledge-graph$1;
+}
