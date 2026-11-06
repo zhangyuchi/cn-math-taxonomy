@@ -50,7 +50,7 @@ def revise(service, job_id, draft, expected_digest, comment=''):
     """全库→job锁内检查审核版本，保留审计并可恢复地修订完整草稿。
 
     意图发布前不改变草稿；发布后先撤销审批。中断期间draft/approve均拒绝，
-    显式worker启动恢复旧版。成功后重建报告，任何修订均须重新批准。
+    显式worker启动恢复旧版。成功后重建校验报告并保留初始匹配证据，任何修订均须重新批准。
     """
     from .transactions import assert_clean
     check_shape(draft)
@@ -67,6 +67,12 @@ def revise(service, job_id, draft, expected_digest, comment=''):
                 raise ImportErrorResponse('DRAFT_CHANGED', '所见草稿已过期，请重新读取后修订', 409)
             service.source(job_id)
             directory = service.job_dir(job_id)
+            # 改挂后保留初始机器评分；matchesScope 避免把旧评分解释为修订后挂点的依据。
+            parsed = read_json(directory / 'reports/parse.json')
+            details = {key: parsed[key] for key in ('matches', 'matchesScope') if key in parsed}
+            if 'matches' in details:
+                details['matchesScope'] = 'initial_parse'
+            details.update(revision=True, unparsed=[])
             intent = dict(state='prepared', before=before, after=draft,
                           beforeSha256=expected_digest, afterSha256=digest_bytes(json_bytes(draft)),
                           comment=comment, actor='ops', at=now().isoformat(timespec='seconds'))
@@ -92,5 +98,5 @@ def revise(service, job_id, draft, expected_digest, comment=''):
                     recover_locked(service, job_id)
                 raise
             from .worker import write_reports
-            write_reports(service, job_id, draft, {'revision': True, 'unparsed': []})
+            write_reports(service, job_id, draft, details)
             return meta

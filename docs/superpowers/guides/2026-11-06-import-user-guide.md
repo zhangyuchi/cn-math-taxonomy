@@ -104,7 +104,7 @@ IMPORT_WORKER_PID=$!
 
 ### 3.1 文本卷：直接导入
 
-以下是可运行的原创格式示例；实际使用时换成经整理的卷子内容和正确挂点。`topicId` 应来自所选学科的现有知识点，不能用前缀代替。
+以下是可运行的原创格式示例；实际使用时替换题目内容。`topicId` 可以省略；若显式填写，应使用所选学科的现有知识点 ID，不能用前缀代替。
 
 ```bash
 cat >"$IMPORT_WORKSPACE/exam.md" <<'EOF'
@@ -122,7 +122,9 @@ python3 import-cli paper --prefix cnm --file "$IMPORT_WORKSPACE/exam.md"
 
 TXT 也可使用 `Q1`、`1.`、`1、` 编号块；CSV 使用 `prompt,answer,type,difficulty,topicId,choices,explanation,verify,unordered` 列，可选列可以省略。选择题选项、字段续行等完整格式见[模块“文本卷”说明](../../../import-module/README.md#文本卷)。
 
-没有挂点或挂点未知的题会保留 `topicId: null`；名称关键词建议仅写入报告，不会自动确认归属。必须在审核时指定合法挂点。不能把“命令成功提交”视为“卷子已全部解析”。
+每道成功导入题都有 `topicId`：保留合法显式点；未填写或填写同前缀未知 ID 时，自动选择同 `--prefix` 学科内匹配得分最高的现有非 external 知识点。显式跨学科 ID 返回 `SUBJECT_CONFLICT`；该学科无可用知识点则整卷失败 `NO_TOPIC_CANDIDATES`，不会虚构或跨科兜底。人工只做业务复核，必要时可改挂点，无需逐题补点。仍须检查解析题数及 `unparsed`，不能把“命令成功提交”视为“卷子已全部解析”。
+
+评分对题干和名称忽略大小写：包含完整名称加 20 分，每个不同连续二字片段命中加 1 分。按分数降序，同分按 `topicId` 字典序升序；全部零分仍选择第一项并标识 `zeroEvidence=true`。`reports/parse.json.matches` 记录初始 `topicId`、`score`、原填写 ID、`match`（显式/最佳匹配）、并列规则及最多五项含分数和命中片段的 `candidates`。合法显式点优先，可能不在排名前五内。`matchesScope=initial_parse` 表示这些是初始机器匹配证据，复核改挂后仍可查；当前挂点以草稿为准。规则分不表示准确率或置信概率。
 
 ### 3.2 PDF 卷：先确认 worker 已加载 OCR 环境
 
@@ -133,7 +135,7 @@ python3 import-cli paper --prefix cnm --file "$PAPER_PDF"
 
 worker 自动完成 **HOME MinerU OCR → 结构解析 → `draft/questions.json` → `needs_review`**。`source/normalized.md` 保留 OCR 原文，无需改成第 3.1 节的英文键值格式。自动解析连续数字题号（包括 Markdown 标题）、中文大题标题、同行/分行 A–D 选项、中文答案/解析标签，以及卷末编号答案、Markdown 或简单 HTML 答案表；保留公式与子问。
 
-题型按选项和答案形态生成 `choice`、`numeric` 或 `short`；未标难度时默认 `standard`，并在 `reports/parse.json.structure` 中注明。原卷未提供挂点时保留 `topicId:null`，同学科挂点建议写入 `reports/parse.json.matches`。审核台负责确认这些业务信息及批准，不承担题目格式整理。
+题型按选项和答案形态生成 `choice`、`numeric` 或 `short`；未标难度时默认 `standard`，并在 `reports/parse.json.structure` 中注明。每题自动挂到同学科现有知识点，使用与文本卷相同的评分及兜底规则，证据写入 `reports/parse.json.matches`。审核台复核这些业务信息及批准，可改挂点，不承担题目格式整理或逐题补点。
 
 **原 PDF 必须包含明确答案，系统不编造缺失答案。** 无法切题、题号重复/不连续、答案错配或冲突、选项残缺时返回 `PAPER_STRUCTURE_FAILED`；缺少答案为 `PAPER_ANSWER_MISSING`；当前 OCR 协议不持久保存题图，发现图片引用为 `PAPER_ASSET_MISSING`。这些情况整卷失败，并保留 OCR 原文与结构诊断，不以部分成功题替代整卷。由运维根据报告修复引擎/解析能力后 `requeue` 原 PDF，无需用户改写 MD。含图试卷仍有资源支持边界；不要使用返回固定文本的 `ocr_fixture.py` 识别真实卷子。自动结构化测试不能证明所有扫描版式的 OCR 准确率。
 
@@ -209,7 +211,7 @@ OCR/解析期间 worker 持有全库锁，`status`、`draft`、`diff` 可能返�
 
 **审核台：**在 aipower 的浏览器打开 `http://127.0.0.1:8765/import-login/`，输入本次 token 登录（会话有效期 8 小时）。若教师从自己的电脑远程操作 aipower，应由运维提供 SSH 端口转发；浏览器地址使用实际转发端口。不要开放公网端口或将审核台挂在现有静态站同源路径下。
 
-审核台没有文件上传入口；先用 CLI 提交，再在任务详情中核对原文、草稿、差异和报告。PDF 的题目结构由 worker 自动生成，审核只处理挂点、答案、难度等业务决策。需要业务修改时使用“修订完整草稿”，编辑五份 JSON 后保存，再重新审阅和批准。保存修订会使旧审批失效。批准之后仍需执行 apply，可使用第 5.3 节的 CLI 命令。
+审核台没有文件上传入口；先用 CLI 提交，再在任务详情中核对原文、草稿、差异和报告。PDF 的题目结构及每题挂点由 worker 自动生成，审核只复核挂点、答案、难度等业务信息。需要改挂等业务修改时使用“修订完整草稿”，编辑五份 JSON 后保存，再重新审阅和批准；无需修改时可直接批准。保存修订会使旧审批失效。批准之后仍需执行 apply，可使用第 5.3 节的 CLI 命令。
 
 **CLI：**先读取差异和完整草稿快照：
 
@@ -308,7 +310,8 @@ tail -n 50 "$IMPORT_WORKSPACE/api.log" "$IMPORT_WORKSPACE/worker.log"
 | `PAPER_ANSWER_MISSING` | 原卷或 OCR 结果缺少某题明确答案；交运维核查原 PDF 与识别结果，不生成猜测答案 |
 | `PAPER_ASSET_MISSING` | OCR 含未持久保存的题图；当前不能生成完整可入库题目，交运维处理资源支持，不得批准残缺题 |
 | `EMPTY_PAPER` / `EMPTY_TOC` / `METADATA_CONFLICT` | 结构化文本没有可解析题目/目录，或元数据与参数冲突；核对第 3.1/4 节的文本契约。PDF 自动路径使用上述专用结构失败码 |
-| `TOPIC_ID_REQUIRED` | 题目挂点未确认，或版本对照缺显式 ID；修订草稿或补齐对照输入 |
+| `NO_TOPIC_CANDIDATES` | 所选学科无可用现有知识点；先在私有工作副本恢复该学科合法知识点后重试，不得改用其他学科兜底 |
+| `TOPIC_ID_REQUIRED` | 修订误删题目挂点、历史草稿仍为 null，或版本对照缺显式 ID；修复草稿或补齐对照输入。历史待审任务可先驳回再 requeue，重新自动挂点 |
 | `REVIEW_REQUIRED` | 新点、新题等尚未人工批准；审核最终稿后再 apply |
 | `DRAFT_CHANGED` | 所见稿或获批稿已经变化；重新读取、审阅、批准 |
 | `VERIFY_MISMATCH` / `VALIDATION_FAILED` | 表达式核验不一致或候选库不合格；读取报告，修订、重审，不可强制绕过 |

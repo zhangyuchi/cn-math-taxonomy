@@ -3,6 +3,8 @@
 - 日期：2026-11-06；Task Mode：`design-build`；状态：已实现并验证，advisor 开工/终审均 GO；Outcome Status：`complete`。
 - 目标：取消原有 1 MiB 源文件门槛，扫描卷无需人工改写 Markdown 即生成待审题目；最终由 advisor 终审并推送 `feat/import-module`。
 
+后续契约覆盖：本文记录交付时的 null 挂点路径；当前试卷挂点规则以[强制挂点设计](2026-11-06-forced-topic-match.md)为准，每题自动选择同学科最佳现有知识点，报告供复核可改。
+
 ## 证据与边界
 
 开工时分支 `feat/import-module`，工作区干净。`store.py` 对所有源文件限制 1 MiB；`ocr.py` 复用此限制；`ocr_mineru.py` 另对单段与合并 Markdown 限制 1 MiB；`api.py` 限制请求 2 MiB；CLI 在校验前读取完整文件。`paper.py` 只接收英文键值的题目块或 CSV，扫描结果缺少这些键时返回 `EMPTY_PAPER`。`revision.py` 另对入站草稿修订限制 1 MiB。

@@ -126,7 +126,7 @@ def prepared_draft(service, meta, draft):
         seen.add(question['id'])
         tid = question.get('topicId')
         if tid is None:
-            raise ImportErrorResponse('TOPIC_ID_REQUIRED', '请审核并指定每题topicId')
+            raise ImportErrorResponse('TOPIC_ID_REQUIRED', '草稿每题必须保留合法 topicId；请修复修订或重新解析旧任务')
         if not isinstance(tid, str) or not tid.startswith(prefix + '_'):
             raise ImportErrorResponse('SUBJECT_CONFLICT', '题目挂点与任务学科冲突')
         tid = remap.get(tid, tid)

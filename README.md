@@ -593,6 +593,7 @@ python3 -m http.server 8000
 ## 教材与试卷导入（运维）
 
 [导入模块](import-module/README.md)支持教材TOC、版本对照、文本卷及扫描 PDF 自动结构化：在 aipower 经 HOME MinerU OCR 后自动切题、提取原卷答案与选项、判断类型，生成待审草稿，无需人工整理 Markdown。文本源上限 16 MiB，PDF/OCR 输出及草稿修订上限 64 MiB，HTTP 请求上限 65 MiB；具体支持版式与失败码见[使用指南](docs/superpowers/guides/2026-11-06-import-user-guide.md)。新点/题须经业务审核批准和完整校验后才能应用到独立工作副本；apply不会自动更新静态站，qqvps 默认不运行重 OCR。
+试卷每道成功导入题均具有 `topicId`：合法显式挂点优先，否则按名称及二字关键词规则选择同 `--prefix` 学科得分最高的现有知识点；同分按 ID 字典序，零分仍兜底并标识。评分和前五候选保留报告，人工复核可改挂点；该学科无可用知识点则明确失败，禁止跨科兜底。详细规则见[文本卷说明](import-module/README.md#文本卷)。
 [qqvps部署说明](deploy/README.md)提供current发布、健康检查/失败回滚及独立端口鉴权审核台；原文与任务记录不进入公开静态根。
 
 ## 部署（Cloudflare Pages）

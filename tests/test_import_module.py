@@ -502,16 +502,133 @@ class CompleteAcceptance(WorkspaceCase):
         job = self.paper(PAPER.replace(b'topicId: cnm_001\n', b'') + b'\n## Q2\nprompt: incomplete')
         self.assertEqual(self.service.get(job)['status'], 'needs_review')
         question = self.service.draft(job)['questions'][0]
-        self.assertIsNone(question['topicId'])
+        self.assertIsInstance(question['topicId'], str)
+        self.assertTrue(question['topicId'].startswith('cnm_'))
         self.assertNotIn('suggestedTopicIds', question)
         report = read_json(self.service.job_dir(job) / 'reports/parse.json')
         self.assertTrue(report['matches'][0]['suggestedTopicIds'])
+        self.assertEqual(report['matches'][0]['topicId'], question['topicId'])
+        self.assertEqual(report['matches'][0]['match'], 'best_match')
+        self.assertEqual(report['matches'][0]['candidates'][0]['topicId'], question['topicId'])
+        self.assertEqual(read_json(self.service.job_dir(job) / 'reports/coverage.json')['unresolved'], 0)
         self.assertTrue(report['unparsed'])
+        self.assertTrue(read_json(self.service.job_dir(job) / 'reports/validate.json')['ok'])
         self.service.approve(job)
-        self.assert_code('TOPIC_ID_REQUIRED', lambda: apply_job(self.service, job))
+        apply_job(self.service, job)
+        self.assertEqual(self.service.get(job)['status'], 'applied')
+        self.baseline = self.formal_hashes()
         empty = self.paper(b'no questions here')
         self.assertEqual(self.service.get(empty)['error']['code'], 'EMPTY_PAPER')
         self.assertEqual(self.formal_hashes(), self.baseline)
+
+    def test_paper_missing_and_unknown_topics_across_text_formats(self):
+        cases = [('exam.md', PAPER.replace(b'topicId: cnm_001\n', b'')),
+                 ('exam.txt', PAPER.replace(b'## Q1', b'1.').replace(b'cnm_001', b'cnm_999999')),
+                 ('exam.csv', 'prompt,answer\n正数与负数中，-2的相反数是多少？,2\n'.encode())]
+        for filename, content in cases:
+            with self.subTest(filename=filename):
+                job = self.paper(content, filename)
+                snapshot = self.service.snapshot(job)
+                self.assertEqual(snapshot['status'], 'needs_review')
+                q = snapshot['draft']['questions'][0]
+                self.assertIsInstance(q['topicId'], str)
+                match = snapshot['reports']['parse']['matches'][0]
+                self.assertEqual(match['topicId'], q['topicId'])
+                self.assertEqual(match['score'], match['candidates'][0]['score'])
+                self.assertGreater(match['score'], 0)
+                self.assertEqual(match['match'], 'best_match')
+                self.assertLessEqual(len(match['candidates']), 5)
+                self.assertTrue(all(c['topicId'].startswith('cnm_') for c in match['candidates']))
+                self.assertEqual(match['suppliedTopicId'], 'cnm_999999' if filename.endswith('.txt') else None)
+                self.assert_code('REVIEW_REQUIRED', lambda: apply_job(self.service, job))
+                self.service.approve(job)
+                apply_job(self.service, job)
+                applied = read_json(self.service.data / 'questions.json')[-1]
+                self.assertEqual(applied['topicId'], q['topicId'])
+                self.assertRegex(applied['id'], '^' + q['topicId'] + r'_q\d+$')
+
+    def test_paper_explicit_topic_keeps_user_choice_and_all_subjects_get_fallback(self):
+        from import_module.store import SUBJECTS
+        topics = read_json(self.service.data / 'topics.json')
+        for prefix in SUBJECTS:
+            with self.subTest(prefix=prefix):
+                job = self.paper(PAPER.replace(b'topicId: cnm_001\n', b''), prefix=prefix)
+                snapshot = self.service.snapshot(job)
+                self.assertEqual(snapshot['status'], 'needs_review')
+                tid = snapshot['draft']['questions'][0]['topicId']
+                self.assertIn(tid, {t['id'] for t in topics if t['id'].startswith(prefix + '_')})
+                self.assertTrue(all(c['topicId'].startswith(prefix + '_')
+                                    for c in snapshot['reports']['parse']['matches'][0]['candidates']))
+        job = self.paper(PAPER.replace(b'cnm_001', b'cnm_002'))
+        snapshot = self.service.snapshot(job)
+        self.assertEqual(snapshot['draft']['questions'][0]['topicId'], 'cnm_002')
+        self.assertEqual(snapshot['reports']['parse']['matches'][0]['match'], 'explicit')
+
+    def test_paper_ranking_and_zero_evidence_ties_are_stable_and_subject_scoped(self):
+        from import_module.paper import parse_paper
+        topics = [dict(id='cnm_903', name='零重合', subject='math'),
+                  dict(id='cnm_902', name='相反数', subject='math'),
+                  dict(id='cnm_901', name='相反数', subject=None),
+                  dict(id='cne_001', name='相反数', subject='english'),
+                  dict(id='cnm_000', name='相反数', subject='english'),
+                  dict(id='cnm_900', name='相反数', external=True)]
+        atomic_json(self.service.data / 'topics.json', topics)
+        meta = dict(sourceFiles=['exam.md'], subjectPrefix='cnm', jobId='test')
+        content = '## Q1\nprompt: 相反数是什么？\nanswer: 2\n'.encode()
+        for order in (topics, list(reversed(topics))):
+            atomic_json(self.service.data / 'topics.json', order)
+            _, draft, details = parse_paper(self.service, meta, content)
+            self.assertEqual(draft['questions'][0]['topicId'], 'cnm_901')
+            match = details['matches'][0]
+            self.assertEqual([c['topicId'] for c in match['candidates']], ['cnm_901', 'cnm_902', 'cnm_903'])
+            self.assertEqual([c['score'] for c in match['candidates']], [22, 22, 0])
+            self.assertFalse(match['zeroEvidence'])
+            self.assertEqual(match['tieBreak'], 'topicId_ascending')
+            self.assertEqual(match['candidates'][0]['matchedKeywords'], ['反数', '相反'])
+            _, draft, details = parse_paper(self.service, meta, b'## Q1\nprompt: xyz\nanswer: 2\n')
+            self.assertEqual(draft['questions'][0]['topicId'], 'cnm_901')
+            self.assertEqual(details['matches'][0]['score'], 0)
+            self.assertTrue(details['matches'][0]['zeroEvidence'])
+        # 显式点优先于机器第一名，所选分数必须来自显式点本身。
+        _, draft, details = parse_paper(self.service, meta, content + b'topicId: cnm_903\n')
+        self.assertEqual(draft['questions'][0]['topicId'], 'cnm_903')
+        self.assertEqual(details['matches'][0]['match'], 'explicit')
+        self.assertEqual(details['matches'][0]['score'], 0)
+        self.assertEqual(details['matches'][0]['candidates'][0]['score'], 22)
+
+    def test_paper_without_subject_candidates_fails_without_draft(self):
+        topics = read_json(self.service.data / 'topics.json')
+        # 即使其他学科有同名点，也不能跨学科兜底；external 与学科标记冲突点不参与。
+        topics = [t for t in topics if not t['id'].startswith('cnm_')]
+        topics.extend([dict(id='cnm_900', name='相反数', external=True),
+                       dict(id='cnm_901', name='相反数', subject='english')])
+        atomic_json(self.service.data / 'topics.json', topics)
+        self.baseline = self.formal_hashes()
+        job = self.paper(PAPER.replace(b'topicId: cnm_001\n', b''))
+        snapshot = self.service.snapshot(job)
+        self.assertEqual(snapshot['status'], 'failed')
+        self.assertEqual(snapshot['error']['code'], 'NO_TOPIC_CANDIDATES')
+        self.assertEqual(snapshot['draft']['questions'], [])
+        self.assertFalse(snapshot['reports']['parse']['ok'])
+        self.assertEqual(self.formal_hashes(), self.baseline)
+
+    def test_paper_review_can_change_topic_without_losing_initial_match_evidence(self):
+        job = self.paper(PAPER.replace(b'topicId: cnm_001\n', b''))
+        initial = self.service.snapshot(job)
+        self.assertIsInstance(initial['draft']['questions'][0]['topicId'], str)
+        evidence = initial['reports']['parse']['matches']
+        self.assertEqual(initial['reports']['parse']['matchesScope'], 'initial_parse')
+        draft = initial['draft']
+        tid = 'cnm_002' if draft['questions'][0]['topicId'] != 'cnm_002' else 'cnm_003'
+        draft['questions'][0]['topicId'] = tid
+        self.service.revise(job, draft, initial['draftSha256'])
+        revised = self.service.snapshot(job)
+        self.assertEqual(revised['reports']['parse']['matches'], evidence)
+        self.assertEqual(revised['reports']['parse']['matchesScope'], 'initial_parse')
+        self.assertEqual(revised['draft']['questions'][0]['topicId'], tid)
+        self.service.approve(job)
+        apply_job(self.service, job)
+        self.assertEqual(read_json(self.service.data / 'questions.json')[-1]['topicId'], tid)
 
     def test_verify_mismatch_is_reported_and_never_applied(self):
         job = self.paper(PAPER.replace(b'answer: 2', b'answer: 3'))

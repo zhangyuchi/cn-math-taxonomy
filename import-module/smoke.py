@@ -78,11 +78,16 @@ def main():
                 assert len(json.loads((data / 'mappings/importdemo_math.json').read_text())['entries']) == 2
                 assert all(path.read_bytes() == baseline[path.name] for path in data.glob('*.json'))
                 paper = workspace / 'exam.md'
-                paper.write_text('## Q1\ntopicId: cnm_001\ndifficulty: standard\ntype: numeric\n'
+                paper.write_text('## Q1\ndifficulty: standard\ntype: numeric\n'
                                  'prompt: 负数-2的相反数是多少？\nanswer: 2\nexplanation: 相反数之和为零。\nverify: 2\n')
                 paper_job = cli('paper', '--prefix', 'cnm', '--file', str(paper))['jobId']
                 worker()
                 assert cli('status', paper_job)['status'] == 'needs_review'
+                paper_snapshot = cli('draft', paper_job)
+                match = paper_snapshot['reports']['parse']['matches'][0]
+                assert match['match'] == 'best_match'
+                assert paper_snapshot['draft']['questions'][0]['topicId'] == match['candidates'][0]['topicId']
+                assert paper_snapshot['reports']['coverage']['unresolved'] == 0
                 assert cli('apply', paper_job, expected=2)['code'] == 'REVIEW_REQUIRED'
                 cli('approve', paper_job, '--comment', '原创隔离测试题核对')
                 cli('apply', paper_job)
@@ -124,7 +129,8 @@ def main():
                 assert cli('status', with_ocr)['status'] == 'needs_review'
                 print(json.dumps(dict(ok=True, textbookJob=topic_job, paperJob=paper_job, mappingsJob=mapping_job,
                                       textbookStatus='approved → 完整修订 → 再审核 → applied', paperStatus='applied',
-                                      mappingsStatus='applied', ocrDisabled='OCR_REQUIRED', ocrFixture='needs_review',
+                                      mappingsStatus='applied', automaticPaperTopic=match['topicId'],
+                                      topicMatchScore=match['score'], ocrDisabled='OCR_REQUIRED', ocrFixture='needs_review',
                                       validate='passed', nonApplyLargeFilesUnchanged=True,
                                       isolatedWorkspaceCleanedOnExit=True), ensure_ascii=False, indent=2))
             finally:

@@ -100,7 +100,11 @@ CSV列：`prompt,answer,type,difficulty,topicId,choices,explanation,verify,unord
 python3 import-cli paper --prefix cnm --file exam.md
 ```
 
-显式挂点必须同学科；未挂点/未知点保持null，最多5条名称关键词建议写 `reports/parse.json.matches`，不自动采纳。新题始终needs_review。
+每道成功导入题均自动具有 `topicId`：合法显式挂点优先；未填写或同前缀未知 ID 时，选择同 `--prefix` 学科内得分最高的现有非 external 知识点。候选的 subject 须与学科一致（数学兼容缺省/null/math）；显式跨学科挂点仍返回 `SUBJECT_CONFLICT`。无可用知识点返回 `NO_TOPIC_CANDIDATES`，整卷失败，不生成虚假挂点。
+
+评分沿用名称规则：题干与名称忽略大小写，完整名称包含加 20 分，每个不同连续二字片段命中加 1 分；按分数降序，同分按 `topicId` 字典序升序。零分仍选第一项并标记 `zeroEvidence=true`。规则分用于复核，不表示准确率或置信概率。
+`reports/parse.json.matches` 保留初始选择 `topicId`、`score`、`match`（`explicit` / `best_match`）、原始 `suppliedTopicId`、`zeroEvidence`、`tieBreak`、`suggestedTopicIds`，以及最多五个 `candidates`（含名称、分数、完整名称命中及命中二字片段）。显式挂点优先时，所选点可能不在前五候选内，`score` 仍为该显式点得分。报告的 `matchesScope=initial_parse` 表示初始机器证据；复核改挂后仍保留，当前挂点以草稿为准。
+新题始终 `needs_review`；人工只需复核答案、难度及自动挂点，必要时可改挂，无需逐题补点后才能批准/apply。
 不完整块写unparsed，零题失败 `EMPTY_PAPER`。verify在受限子进程调用原核验逻辑；mismatch仍待审，但禁止apply。修正答案/表达式或删除verify后须重新审核。
 正式题号在apply锁内续号；新点号竞争机械重映射全部新增引用，映射保存于 `review/apply-intent.json.idMap`。
 
@@ -200,7 +204,7 @@ timeout -k 5s 600s /usr/bin/python3 \
 
 `--pages` 为 1-based，最多10页，与 worker 相同；上述页码分别转换为 `-s 0 -e 1`、`-s 4 -e 4`，按序合并，不识别间隙页。教材不允许空页码，paper 可用 `--pages ''` 识别整卷。适配器使用每任务临时目录，仅在全部页段成功且合并 MD 合法后写目标；临时图像及中间文件退出即清理。超时仅由 worker 统一负责，独立运行时使用上述外层 `timeout`。
 
-与 fixture 的区别：fixture 返回固定测试文本；此适配器实际调用本地 MinerU。PDF paper 的后续结构解析由 worker 自动执行，不要求 OCR 生成英文键值字段，也不要求用户改写 MD：识别连续数字题号、中文大题标题、同行/分行 A–D 选项、中文答案/解析标签，以及卷末编号答案、Markdown/简单 HTML 答案表。子问与公式保留；依据选项及答案形态生成 `choice`、`numeric` 或 `short`，默认难度 `standard`，未知挂点保留 null，建议写报告。已有英文键值 OCR 插件输出继续兼容。
+与 fixture 的区别：fixture 返回固定测试文本；此适配器实际调用本地 MinerU。PDF paper 的后续结构解析由 worker 自动执行，不要求 OCR 生成英文键值字段，也不要求用户改写 MD：识别连续数字题号、中文大题标题、同行/分行 A–D 选项、中文答案/解析标签，以及卷末编号答案、Markdown/简单 HTML 答案表。子问与公式保留；依据选项及答案形态生成 `choice`、`numeric` 或 `short`，默认难度 `standard`，每题按上述规则自动挂到同学科现有知识点，评分和候选写报告供复核。已有英文键值 OCR 插件输出继续兼容。
 
 业务审核确认答案、难度和挂点后批准，不承担格式整理。原卷必须含明确答案；结构解析不猜测答案。无可识别题号、题号重复/不连续、答案冲突/错配、选项残缺等返回 `PAPER_STRUCTURE_FAILED`；缺答案返回 `PAPER_ANSWER_MISSING`；含未持久保存的图片引用返回 `PAPER_ASSET_MISSING`。PDF 遇到任一上述问题整卷失败，不用少量成功题替代完整试卷，不发布本轮部分草稿。诊断及原文写入 `reports/parse.json` 和 `source/normalized.md`，由运维修复识别/解析能力后重试原 PDF；无需用户整理 Markdown。当前不交付临时题图，依赖图片的卷不在自动成功范围。OCR 识别质量仍需与结构链路测试区分。
 
