@@ -94,7 +94,10 @@ def prepared_draft(service, meta, draft):
         index[topic['id']] = topic
     for topic in result['topics']:
         if isinstance(topic.get('mathLinks'), list):
-            topic['mathLinks'] = [remap.get(tid, tid) for tid in topic['mathLinks']]
+            # 现库mathLinks为{id, reason}，不能把它当成裸ID数组。
+            for link in topic['mathLinks']:
+                if isinstance(link, dict) and isinstance(link.get('id'), str):
+                    link['id'] = remap.get(link['id'], link['id'])
     for edge in result['dependencies']:
         if not isinstance(edge, dict):
             raise ImportErrorResponse('INVALID_DRAFT', '依赖须为对象')

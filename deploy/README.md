@@ -18,7 +18,7 @@ REPO_MIRROR=/srv/cn-math-taxonomy/repository.git ./deploy/publish-to-qqvps.sh <�
 首次迁移旧站目录默认为 `/home/ubuntu/Projects/cn-math-taxonomy`；成功前也验证其正文，以证明回滚目标实际可用。
 发布收到SIGTERM会进入回滚；进程异常退出遗留switching intent，在下次发布开头先恢复。保留失败release和意图供审计，不自动清理旧release。
 
-可配置环境：`ROOT`、`REPO_MIRROR`、`LEGACY_ROOT`、`STATIC_PORT`（默认8000）、`HEALTH_TIMEOUT`（默认20秒，上限60）。仅本地测试使用 `PUBLISH_FETCH=0`、`SYSTEMCTL`、`SYSTEMD_DIR`、`PUBLISH_PRIVILEGE_PREFIX`；生产使用默认sudo/systemctl。不要把token放参数。
+可配置环境：`ROOT`、`REPO_MIRROR`、`LEGACY_ROOT`、`STATIC_PORT`（默认8000）、`HEALTH_TIMEOUT`（默认20秒，上限60）。`SYSTEMCTL`、`SYSTEMD_DIR`、`PUBLISH_PRIVILEGE_PREFIX`仅供本地测试替身；生产使用默认sudo/systemctl。`PUBLISH_FETCH=0`可用于本地测试，或已通过bundle核验且远端SHA一致的离线发布。不要把token放参数。
 `PUBLISH_GATE_CHECK`可设为JSON argv，发布器追加新release路径执行真实gate路径检查；失败同样触发回滚。
 
 本仓库 `deploy/check-gate.py`在受信任VPS内读取现有签名机制，只在进程内产生cookie，不读取/记录明文密码，不输出cookie/key。用本机自签名TLS检查真实nginx路径及其他站点正文：
@@ -28,6 +28,8 @@ sudo python3 deploy/check-gate.py /home/ubuntu/Projects/cn-math-taxonomy --captu
 PUBLISH_GATE_CHECK='["sudo","-n","python3","/srv/cn-math-taxonomy/operations/deploy/check-gate.py"]' \
   /srv/cn-math-taxonomy/operations/deploy/publish-to-qqvps.sh <完整SHA>
 ```
+
+GitHub网络慢时可从开发机生成增量 `git bundle create import.bundle feat/import-module ^upstream/main`，VPS先从已有本地仓库读入所需上游完整SHA作为镜像基础（只读旧工作树），`git bundle verify`成功后fetch bundle到镜像；核对SHA与已推送origin一致，再设置 `PUBLISH_FETCH=0` 发布。不得省略bundle先决提交检查或改写旧工作树。
 
 `--capture`必须在切流前运行。检查 `/k12-knowledge-graph/`、图谱/诊断/档案、资产、topics正文与release一致；听写、江山、login/portal摘要与切前一致。
 共享nginx/gate不需要改动；现有gate后proxy到127.0.0.1:8000保持。nginx示例仅供参考，不应整体替换同机配置。

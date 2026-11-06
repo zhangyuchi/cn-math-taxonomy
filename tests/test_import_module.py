@@ -520,6 +520,20 @@ class CompleteAcceptance(WorkspaceCase):
         self.assert_code('VERIFY_MISMATCH', lambda: apply_job(self.service, job))
         self.assertEqual(self.formal_hashes(), self.baseline)
 
+    def test_manual_mathlinks_preserve_existing_object_schema(self):
+        job = self.service.create_job('textbook', 'toc.md', TOC.replace(b'grade: 7', b'grade: 8'),
+                                      dict(mode='expand', subjectPrefix='cnp'))['jobId']
+        run_once(self.service)
+        draft = self.service.draft(job)
+        link = {'id': 'cnm_001', 'reason': '人工校对：运动量计算所用的数学概念'}
+        draft['topics'][0]['mathLinks'] = [link]
+        self.service.revise(job, draft, self.service.draft_digest(job))
+        from import_module.validation import prepared_draft
+        prepared, _ = prepared_draft(self.service, self.service.get(job), self.service.draft(job))
+        self.assertEqual(prepared['topics'][0]['mathLinks'], [link])
+        self.assertEqual(self.service.get(job)['status'], 'needs_review')
+        self.assertEqual(self.formal_hashes(), self.baseline)
+
     def test_all_subject_papers_and_wrong_subject_rejection(self):
         from import_module.store import SUBJECTS
         topics = read_json(self.service.data / 'topics.json')
@@ -561,7 +575,7 @@ class CompleteAcceptance(WorkspaceCase):
 
     def test_multifile_write_failure_rolls_back_each_boundary(self):
         import import_module.transactions as transactions
-        for boundary in (1, 2, 3):
+        for boundary, after_write in ((n, after) for n in (1, 2, 3) for after in (False, True)):
             job = self.completed_expand()
             original = transactions.atomic_bytes
             count = 0
@@ -569,9 +583,12 @@ class CompleteAcceptance(WorkspaceCase):
                 nonlocal count
                 if Path(path).parent == self.service.data:
                     count += 1
-                    if count == boundary:
-                        raise OSError('事务目标写入故障')
-                return original(path, content)
+                    if count == boundary and not after_write:
+                        raise OSError('事务目标写入前故障')
+                result = original(path, content)
+                if Path(path).parent == self.service.data and count == boundary and after_write:
+                    raise OSError('事务目标写入后故障')
+                return result
             with mock.patch.object(transactions, 'atomic_bytes', side_effect=fail):
                 with self.assertRaises(OSError):
                     apply_job(self.service, job)
@@ -604,6 +621,24 @@ class CompleteAcceptance(WorkspaceCase):
         apply_job(self.service, other)
         apply_job(self.service, job)
         self.assertEqual(self.service.get(job)['status'], 'applied')
+
+    def test_all_targets_replaced_but_commit_record_not_written_rolls_back(self):
+        import import_module.transactions as tx
+        from import_module.apply import recover_pending
+        job = self.completed_expand()
+        original = tx.atomic_json
+        def crash(path, value):
+            if Path(path).name == 'apply-intent.json' and value.get('state') == 'committed':
+                raise SystemExit('三个目标已替换但尚未持久commit')
+            return original(path, value)
+        with mock.patch.object(tx, 'atomic_json', side_effect=crash):
+            with self.assertRaises(SystemExit):
+                apply_job(self.service, job)
+        for name in ('topics', 'dependencies', 'questions'):
+            self.assertNotEqual(digest(self.service.data / (name+'.json')), self.baseline['data/'+name+'.json'])
+        recover_pending(self.service)
+        self.assertEqual(self.formal_hashes(), self.baseline)
+        self.assertEqual(self.service.get(job)['status'], 'approved')
 
     def test_multifile_commit_before_meta_crash_finishes_once(self):
         job = self.completed_expand()
@@ -650,6 +685,7 @@ class CompleteAcceptance(WorkspaceCase):
             with self.assertRaises(SystemExit):
                 self.service.revise(job, draft, expected)
         self.assert_code('REVISION_PENDING', lambda: self.service.snapshot(job))
+        self.assert_code('REVISION_PENDING', lambda: self.service.read_file(job, 'draft/questions.json'))
         self.assert_code('REVISION_PENDING', lambda: self.service.approve(job))
         recover_pending(self.service)
         self.assertEqual(self.service.draft(job), before)

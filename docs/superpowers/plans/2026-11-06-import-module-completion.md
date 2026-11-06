@@ -96,3 +96,11 @@ Plan B：解析/校验保留job并失败关闭；事务回滚旧值；切流恢�
 advisor `/root/opening_advisor`：GO_WITH_FIXES。主代理：GO_WITH_FIXES（六项阻塞约定已消化，可编码）。
 F1 审核者所见摘要与单快照→DC7/V7；F2 revision-intent崩溃回滚→DC7/V7；F3 备份/stage/fsync/全库恢复及历史intent→DC8/V8；F4 实际完整expand及标准schema/ID竞争→DC8/V8；F5 OCR普通文件/坏输出/失败清理/配置标识→DC9/V9；F6 首次current/旧unit/运行状态恢复、独立bare mirror、API独立代码指针→DC10/V10。
 事务恢复先校验全部target与备份，回滚故障保持prepared并阻止新apply；已applied终结事务不再校验目标以免把后续合法提交误判冲突。apply只用一次核准draft快照。发布与import代码指针独立，import在自身代码指针切换时协同重启API/worker；静态发布不切import指针。
+
+## 实施证据更新
+
+46项导入unittest、3项发布回归、完整独立进程smoke、本地Chromium、原validator与95/38/8 JS回归均通过；93份既有JSON摘要不变。初步实现提交32f3d10已普通push并部署VPS，current迁移、独立API/worker、13文件健康、gate真路径和实际失败回滚均有证据。
+I-9（验收阶段，resolved）：原线上浏览器30秒预算未完成首次JSON加载；请求诊断确认约50秒全部核心请求完成、首页870点且无应用错误。advisor补充选择A，不改nginx；以单页90秒及数据就绪条件完成多页验收。现仓库统计collect DNS失败另行记录，非本轮新增错误。
+最终多页验收与advisor终审、最终SHA推送/发布结果见完整验收记录。
+
+I-10（本地完成审查，resolved）：发现手工物理mathLinks采用现有{id, reason}对象schema，而候选ID重映射误当字符串数组。先用物理草稿修订回归复现TypeError，再按对象id字段重映射，保留reason与完整validator规则；不影响正式数据。新增“全部目标已写、commit尚未持久”恢复用例，并扩展每一目标写前/写后故障覆盖。

@@ -1,7 +1,7 @@
 # 导入模块完整交付审核与验收
 
 日期：2026-11-06（Asia/Shanghai）。范围：本轮用户A–F（完整v1、OCR接口、qqvps切流）。此记录与上一轮骨架审核分别保留。
-当前状态：实现与本地主要验收已完成；现场部署与最终advisor审核进行中，未将计划当作上线事实。
+当前状态：实现、本地验收、生产切流、实际回滚已完成；线上多页浏览器已通过，最终46项边界回归已通过，待独立advisor终审。
 
 ## 开工审核与主代理准入
 
@@ -22,17 +22,20 @@
 
 | 命令/场景 | 结果 |
 |---|---|
-| `python3 -W error::ResourceWarning -m unittest discover -s tests -p 'test_import_module.py' -v` | 44项通过；含旧mappings回归、paper MD/TXT/CSV/choice、十前缀、建议/null、unparsed/零题、mismatch、审核摘要竞态、五文件修订中断 |
-| 多文件故障注入 | 三文件真实expand成功；每个替换前失败恢复旧字节；真实子进程os._exit(77)后显式恢复；commit后meta故障；回滚再次故障；第三种摘要、坏备份拒绝全部恢复；跨任务及ID竞争 |
+| `python3 -W error::ResourceWarning -m unittest discover -s tests -p 'test_import_module.py' -v` | 46项通过；含旧mappings回归、paper MD/TXT/CSV/choice、十前缀、建议/null、unparsed/零题、mismatch、审核摘要竞态、五文件修订中断 |
+| 多文件故障注入 | 三文件真实expand成功；每个替换前后失败恢复旧字节；真实子进程os._exit(77)后显式恢复；commit后meta故障；回滚再次故障；第三种摘要、坏备份拒绝全部恢复；跨任务及ID竞争 |
 | `python3 -m unittest discover -s tests -p 'test_publish.py' -v` | 3项通过；真实archive/HTTP与受控systemd，切前失败、首次切后失败恢复current原不存在与旧服务、后续失败恢复旧current/drop-in |
 | `python3 import-module/smoke.py` | 独立API/CLI/worker通过；paper人工批准后applied；教材补齐后3文件apply且原validator通过；mappings自动applied；OCR关闭/fixture成功 |
 | `CHROME=... .codex-run/browser-venv/bin/python import-module/browser-smoke.py` | Chromium153.0.8010.12；登录、完整JSON修订、过期页面批准409、paper/mappings apply、驳回、原文XSS仅作文本、390px无横向溢出；pageErrors=[] |
 | `python3 scripts/validate.py` | VALIDATION PASSED，3297点/4868边/13335题；保留基线cnm_130/cnm_192空课标警告 |
 | JS回归 | `node tests/test_engine.js` 95；`test_children.js` 38；`test_blindspots.js` 8，均通过 |
+| `CHROME=... node tests/test_children_browser.js` | 实际下载/跨上下文恢复、取消/合并/幂等/配额回滚、坏文件、375px与明暗主题通过，无页面异常 |
 | 编译/语法/空白 | compileall、node --check、git diff --check通过；最终批次另补 |
 | 正式JSON字节 | 开工保存93份既有JSON SHA256；本批次全数一致。所有apply仅在隔离副本，真实仓库无正式JSON写入 |
 
 初始新增11项测试在缺失功能时红（6fail/5error）；新增HTTP快照用例先因缺digest失败；发布用例先证明旧脚本会将缺文件release切上线。未伪称新增所有测试都有独立红绿历史。
+本地最终审查另发现物理mathLinks手工修订的对象schema被候选重映射误当字符串数组；新增回归先复现TypeError，再修正为对象id重映射，reason保留。新增所有目标已写但commit尚未落盘的恢复测试，扩展每个目标写前/写后故障。
+
 测试发现旧worker恢复后会自动重放人工approved事务，已改为prepared恢复仅回滚，人工再显式apply；自动重放仅纯mappings。首次发布夹具修正为实际旧服务目录，未放宽健康判定。
 
 截图/日志只写忽略的 `.codex-run/`；无原题原文/密钥进入Git。
@@ -42,7 +45,20 @@
 开工现场：VM-0-13-ubuntu，1967MiB；旧cn-math.service指工作树、loopback8000；current不存在；nginx gate后proxy8000；匿名302、login200。
 已有nginx `jiangshan-map.conf` 的 duplicate webp警告在切流前已存在。计划保持共享nginx/gate及其他站点配置不变。
 
-此处将在实际发布、健康/浏览器、鉴权、其他站点与回滚结果后更新；在补齐前不视为已上线验收。
+实际部署实现提交：`32f3d107fcee2c3a132e9fcd41883c8b72c21ec9`，普通push成功。VPS GitHub拉取慢，改用开发机增量bundle；VPS从旧本地仓库只读获取先决上游完整SHA，bundle verify通过，镜像ref与已推送SHA相同；旧工作树未跟踪docs保留。
+
+- `current → /srv/cn-math-taxonomy/releases/20261106T041443Z-32f3d107fcee-3c36b7`。cn-math.service的WorkingDirectory与ExecStart均走current；进程cwd实际为该release。
+- 发布器临时端口预检和切后13份核心HTML/JS/CSS/JSON的HTTP200+SHA256通过，index SHA256=`171329ff439422b2bb34484628a8138c6479fe5d52f1c558931fcb4291cb58d4`。
+- 在VPS进程内生成gate签名cookie（不输出、不存储），经真实nginx检查 `/k12-knowledge-graph/`、explore、diagnose、children、assets/site.css及data/topics.json，均200且正文与release一致。
+- 听写/江山/login/portal正文SHA256与切前一致，共享nginx/gate未修改。nginx -t通过，原有webp警告保持。
+- 实际故障演练：同SHA再发布，切后 `PUBLISH_GATE_CHECK=["/usr/bin/false"]` 故意失败；发布非零、自动恢复前一current/drop-in和服务，intent=rolled_back、rollbackHealthy=true；随后真实gate路径与其他站点复核通过。不是仅靠mock声称回滚。
+- 导入代码独立 `import-current → import-releases/32f3d107fcee2c3a132e9fcd41883c8b72c21ec9`；workspace=`/srv/cn-math-taxonomy/import-workspace`，root0600私密环境文件，API/worker均active，OCR默认关闭。
+- 实际curl：API与审核台无鉴权401；静态8000的data/imports、review-ui均404；ss只监听127.0.0.1:8765。通过SSH独立18765端口运维，不进入站点SW origin。
+- 现场日志：`.codex-run/online-before.log`、`vps-bundle.log`、`online-publish.log`、`online-rollback-drill.log`、`online-import-install.log`、`online-isolation.log`。无cookie/token/key内容。
+
+线上首页独立诊断确认约50秒加载完成（数学870点），核心请求全部完成，应用pageErrors/load-error均为空。既有topics约2.8MiB、questions约8.8MiB，公网首次下载较慢；既有统计collect请求发生DNS失败，单列非核心问题，未将其伪称正常。advisor补充顾问判断采用保持nginx的方案A：该证据不构成部署故障，验收以单页90秒和真实就绪/交互为准，不新增本轮性能改造。若核心页面90秒仍不就绪继续诊断，不任意加时。线上最终Chromium153多页验收已通过（`.codex-run/online-browser.log`）：首页数据计数就绪、图谱canvas显示、诊断真实交互就绪、children页均200且非登录页；pageErrors=[]。SSH独立18765端口生产审核台登录成功、未认证API401、navigator.serviceWorker.controller=null。截图为 `.codex-run/online-{home,explore,diagnose,children,import-review}.png`，已实际查看图谱与移动审核台截图。
+
+首次检查使用networkidle/30秒未通过，诊断后改为明确数据就绪及90秒上限。没有把失败隐藏或仅靠延长等待声称正常；同一现场独立诊断记录显示核心JSON实际完成，并按advisor补充判断保留首次下载成本与统计DNS问题。最终部署提交在Git交付后记录。
 
 ## 终审与交付
 
