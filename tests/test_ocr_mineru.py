@@ -41,9 +41,10 @@ if mode == 'missing':
 if mode == 'symlink':
     path.symlink_to(home / 'argv.jsonl')
 else:
-    data = {'empty': b' ', 'invalid': b'\\xff', 'nul': b'a\\x00b',
-            'large': b'a' * (1024 * 1024 + 1), 'limit': b'a' * (1024 * 1024),
-            'aggregate': b'a' * (600 * 1024)}.get(mode, text.encode())
+    sizes = {'large': 64 * 1024 * 1024 + 1, 'limit': 64 * 1024 * 1024,
+             'former-large': 1024 * 1024 + 1, 'aggregate': 33 * 1024 * 1024}
+    data = (b'a' * sizes[mode] if mode in sizes else
+            {'empty': b' ', 'invalid': b'\\xff', 'nul': b'a\\x00b'}.get(mode, text.encode()))
     path.write_bytes(data)
 '''
 
@@ -122,10 +123,36 @@ class MinerUAdapterTests(unittest.TestCase):
         self.assertEqual(len(self.calls()), 2)
         self.assertFalse(self.output.exists())
 
-    def test_output_exactly_one_mib_is_accepted(self):
+    def test_output_exactly_64_mib_is_accepted(self):
         result = self.invoke(mode='limit')
         self.assertEqual(result.returncode, 0, result.stderr.decode())
-        self.assertEqual(self.output.stat().st_size, 1024 * 1024)
+        self.assertEqual(self.output.stat().st_size, 64 * 1024 * 1024)
+
+    def test_single_and_merged_output_above_old_limit(self):
+        for pages in ('', '1,3'):
+            with self.subTest(pages=pages):
+                result = self.invoke(pages, mode='former-large')
+                self.assertEqual(result.returncode, 0, result.stderr.decode())
+                self.assertGreater(self.output.stat().st_size, 1024 * 1024)
+                self.output.unlink()
+
+    def test_raw_scan_through_home_adapter_and_worker(self):
+        from import_module.worker import run_once
+        # 替身仅代替耗时引擎，适配器、OCR 校验及结构解析均执行真实代码。
+        fixture = (ROOT / 'tests/fixtures/paper-mineru.md').read_bytes()
+        self.exe.write_text('#!' + sys.executable + '\n' + FAKE + '\npath.write_bytes(' + repr(fixture) + ')\n')
+        service = self.service()
+        meta = service.create_job('paper', 'scan.pdf', b'%PDF-test' + b'0' * (1024 * 1024),
+                                  dict(subjectPrefix='cnm'))
+        env = dict(self.env, IMPORT_OCR_COMMAND=json.dumps([sys.executable, str(ADAPTER)]),
+                   IMPORT_OCR_TIMEOUT='10')
+        with mock.patch.dict(os.environ, env):
+            run_once(service)
+        result = service.snapshot(meta['jobId'])
+        self.assertEqual(result['status'], 'needs_review', result['error'])
+        self.assertEqual(len(result['draft']['questions']), 3)
+        self.assertEqual([q['answer'] for q in result['draft']['questions']], ['B', '2', '两数之和为零。'])
+        self.assertEqual(len(self.calls()), 1)
 
     def test_missing_home_install_is_explicit_failure(self):
         self.exe.unlink()

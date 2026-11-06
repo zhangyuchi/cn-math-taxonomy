@@ -1,6 +1,8 @@
 """五文件草稿修订的持久意图与补偿恢复；审批永远先失效。"""
 import uuid
 
+from .limits import MAX_DRAFT_BYTES, MIB
+
 from .store import (DRAFT_NAMES, ImportErrorResponse, atomic_json, digest_bytes,
                     file_lock, json_bytes, now, read_json, sync_directory)
 
@@ -10,8 +12,8 @@ def check_shape(draft, *, limit_size=True):
     if (not isinstance(draft, dict) or set(draft) != set(DRAFT_NAMES) or
             not isinstance(draft['mappings'], dict) or
             any(not isinstance(draft[n], list) or any(not isinstance(row, dict) for row in draft[n])
-                for n in DRAFT_NAMES if n != 'mappings') or (limit_size and len(json_bytes(draft)) > 1024*1024)):
-        raise ImportErrorResponse('INVALID_DRAFT', '修订须为约定五份JSON，数组内为对象，总计≤1MiB')
+                for n in DRAFT_NAMES if n != 'mappings') or (limit_size and len(json_bytes(draft)) > MAX_DRAFT_BYTES)):
+        raise ImportErrorResponse('INVALID_DRAFT', f'修订须为约定五份JSON，数组内为对象，总计≤{MAX_DRAFT_BYTES // MIB}MiB')
 
 
 def pending(service, job_id):

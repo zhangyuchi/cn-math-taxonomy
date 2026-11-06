@@ -11,20 +11,22 @@ import stat
 import tempfile
 import uuid
 
+from .limits import MIB, source_limit
+
 CODE_ROOT = Path(__file__).resolve().parents[1]
 SUBJECTS = json.loads((Path(__file__).with_name('subjects.json')).read_text())
 JOB_RE = re.compile(r'^\d{8}-\d{6}-[a-f0-9]{8}$')
 DRAFT_NAMES = ('topics', 'dependencies', 'questions', 'mappings', 'standards_suggestions')
-MAX_SOURCE_BYTES = 1024 * 1024
 
 
 class ImportErrorResponse(Exception):
     """将明确的业务错误映射到 API 状态及 CLI 退出码。"""
 
-    def __init__(self, code, message, status=422):
+    def __init__(self, code, message, status=422, details=None):
         super().__init__(message)
         self.code = code
         self.status = status
+        self.details = details
 
 
 def now():
@@ -170,9 +172,10 @@ class Service:
             raise ImportErrorResponse('MAPPINGS_SUBJECT_UNSUPPORTED', '现有 validator 仅支持数学和英语 mappings')
         suffix = Path(filename).suffix.lower()
         if suffix not in ('.md', '.txt', '.csv', '.pdf'):
-            raise ImportErrorResponse('FORMAT_UNSUPPORTED', '请提供 MD/TXT/CSV；PDF 需后续 OCR')
-        if not content or len(content) > MAX_SOURCE_BYTES:
-            raise ImportErrorResponse('SOURCE_SIZE', '源文件必须为 1 字节至 1 MiB', 413)
+            raise ImportErrorResponse('FORMAT_UNSUPPORTED', '请提供 MD/TXT/CSV/PDF；PDF 由 worker 自动 OCR 解析')
+        limit = source_limit(filename)
+        if not content or len(content) > limit:
+            raise ImportErrorResponse('SOURCE_SIZE', f'源文件必须为 1 字节至 {limit // MIB} MiB', 413)
         stamp = now()
         job_id = stamp.strftime('%Y%m%d-%H%M%S-') + uuid.uuid4().hex[:8]
         staging = self.imports / ('_staging-' + job_id)
@@ -204,12 +207,15 @@ class Service:
     def source(self, job_id):
         """核对原始字节摘要，防止 requeue 静默替换审计输入。"""
         meta = self.get(job_id)
-        content = self.read_file(job_id, meta['sourceFiles'][0])
+        path = self.job_dir(job_id) / meta['sourceFiles'][0]
+        content = self.read_file(job_id, meta['sourceFiles'][0], limit=source_limit(path))
+        if not content or len(content) > source_limit(path):
+            raise ImportErrorResponse('SOURCE_SIZE', '原始源文件为空或超过类型上限', 413)
         if digest_bytes(content) != meta['sourceSha256']:
             raise ImportErrorResponse('SOURCE_CHANGED', '源文件已变化，请创建新 job', 409)
         return content
 
-    def read_file(self, job_id, relative):
+    def read_file(self, job_id, relative, limit=None):
         """只读 job 内普通文件；拒绝绝对路径、.. 和符号链接越界。"""
         directory = self.job_dir(job_id)
         path = Path(relative)
@@ -222,7 +228,8 @@ class Service:
             raise ImportErrorResponse('INVALID_PATH', '文件必须位于当前 job 内', 400)
         if not target.is_file():
             raise ImportErrorResponse('NOT_FOUND', '文件不存在', 404)
-        return target.read_bytes()
+        with target.open('rb') as stream:
+            return stream.read() if limit is None else stream.read(limit + 1)
 
     def cleanup_draft_temps(self, job_id):
         """显式恢复/重解析在全库→job锁内清理本模块孤儿临时文件。

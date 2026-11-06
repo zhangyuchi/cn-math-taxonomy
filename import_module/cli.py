@@ -9,6 +9,9 @@ from urllib.parse import urlencode, quote, urlsplit
 from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 import uuid
 
+from .limits import MAX_REQUEST_BYTES, MIB, read_source, source_limit
+from .store import ImportErrorResponse
+
 
 class NoRedirect(HTTPRedirectHandler):
     """拒绝重定向，防止 Authorization 随未知地址转发。"""
@@ -30,7 +33,10 @@ def multipart(path, parameters):
     filename = path.name.replace('"', '_').replace('\r', '_').replace('\n', '_')
     blocks.append(('--' + boundary + '\r\nContent-Disposition: form-data; name="file"; filename="' + filename
                    + '"\r\nContent-Type: application/octet-stream\r\n\r\n').encode())
-    blocks.extend([path.read_bytes(), ('\r\n--' + boundary + '--\r\n').encode()])
+    content = read_source(path)
+    if not content or len(content) > source_limit(path):
+        raise ImportErrorResponse('SOURCE_SIZE', f'源文件必须为 1 字节至 {source_limit(path) // MIB} MiB', 413)
+    blocks.extend([content, ('\r\n--' + boundary + '--\r\n').encode()])
     return b''.join(blocks), 'multipart/form-data; boundary=' + boundary
 
 
@@ -110,15 +116,24 @@ def main(argv=None):
                             expected = json.load(response)['draftSha256']
                     data['expectedDraftSha256'] = expected
                 elif args.command == 'revise':
-                    draft = json.loads(args.file.read_text(encoding='utf-8'))
+                    with args.file.open('rb') as stream:
+                        content = stream.read(MAX_REQUEST_BYTES + 1)
+                    if len(content) > MAX_REQUEST_BYTES:
+                        raise ImportErrorResponse('REQUEST_TOO_LARGE', '修订请求文件超过 65 MiB', 413)
+                    draft = json.loads(content.decode('utf-8-sig'))
                     data = dict(draft=draft.get('draft', draft), expectedDraftSha256=args.expected_digest, comment=args.comment)
                 body = json.dumps(data, ensure_ascii=False).encode()
+        if body is not None and len(body) > MAX_REQUEST_BYTES:
+            raise ImportErrorResponse('REQUEST_TOO_LARGE', '请求体超过 65 MiB', 413)
         request = Request(base + endpoint, body, method=method,
                           headers={'Authorization': 'Bearer ' + token, 'Content-Type': content_type})
         opener = build_opener(ProxyHandler({}), NoRedirect())
         with opener.open(request, timeout=90) as response:
             print(json.dumps(json.load(response), ensure_ascii=False, indent=2))
         return 0
+    except ImportErrorResponse as exc:
+        print(json.dumps({'code': exc.code, 'error': str(exc)}, ensure_ascii=False), file=sys.stderr)
+        return 2
     except HTTPError as exc:
         try:
             try:

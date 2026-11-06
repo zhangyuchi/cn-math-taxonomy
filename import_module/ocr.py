@@ -7,7 +7,8 @@ import signal
 import subprocess
 import tempfile
 
-from .store import ImportErrorResponse, MAX_SOURCE_BYTES, atomic_bytes, atomic_json, digest_bytes
+from .store import ImportErrorResponse, atomic_bytes, atomic_json, digest_bytes
+from .limits import MAX_OCR_BYTES, MIB
 
 
 def _pages(value, required):
@@ -72,10 +73,13 @@ def normalize_pdf(service, meta):
                 raise ImportErrorResponse('OCR_FAILED', 'OCR插件无法启动，请检查用户空间依赖') from exc
             if process.returncode:
                 raise ImportErrorResponse('OCR_FAILED', 'OCR插件退出失败，原PDF已保留')
-            if output.is_symlink() or not output.is_file() or not 0 < output.stat().st_size <= MAX_SOURCE_BYTES:
-                raise ImportErrorResponse('OCR_OUTPUT_INVALID', '插件必须输出非空普通UTF8文件（≤1MiB）')
+            if output.is_symlink() or not output.is_file() or not 0 < output.stat().st_size <= MAX_OCR_BYTES:
+                raise ImportErrorResponse('OCR_OUTPUT_INVALID', f'插件必须输出非空普通UTF8文件（≤{MAX_OCR_BYTES // MIB}MiB）')
             try:
-                content = output.read_bytes()
+                with output.open('rb') as stream:
+                    content = stream.read(MAX_OCR_BYTES + 1)
+                if len(content) > MAX_OCR_BYTES:
+                    raise ValueError('输出超过上限')
                 text = content.decode('utf-8-sig')
                 if not text.strip() or '\x00' in text:
                     raise ValueError('空文本或NUL')

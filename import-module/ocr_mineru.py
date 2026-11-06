@@ -5,9 +5,11 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import sys
 import tempfile
 
-MAX_BYTES = 1024 * 1024
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from import_module.limits import MAX_OCR_BYTES, MIB
 
 
 def page_ranges(value, kind):
@@ -64,17 +66,17 @@ def convert(source, target, kind, pages):
             if markdown.is_symlink() or not markdown.is_file():
                 raise ValueError('MinerU 未生成普通 Markdown 文件，请检查模型与运行日志')
             with markdown.open('rb') as stream:
-                data = stream.read(MAX_BYTES + 1)
-            if len(data) > MAX_BYTES:
-                raise ValueError('MinerU Markdown 超过1MiB')
+                data = stream.read(MAX_OCR_BYTES + 1)
+            if len(data) > MAX_OCR_BYTES:
+                raise ValueError(f'MinerU Markdown 超过{MAX_OCR_BYTES // MIB}MiB')
             text = data.decode('utf-8-sig').strip()
             if not text or '\x00' in text:
                 raise ValueError('MinerU Markdown 为空或含 NUL')
             if content:
                 content.extend(b'\n\n')
             content.extend(text.encode('utf-8'))
-            if len(content) > MAX_BYTES:
-                raise ValueError('合并后的 Markdown 超过1MiB')
+            if len(content) > MAX_OCR_BYTES:
+                raise ValueError(f'合并后的 Markdown 超过{MAX_OCR_BYTES // MIB}MiB')
     target.write_bytes(content)
 
 

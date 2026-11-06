@@ -2,7 +2,7 @@
 
 适用对象：在 **aipower** 上操作的教师和运维人员。本文按 2026-11-06 的实现编写，入口为仓库根目录的 `import-api`、`import-worker`、`import-cli`。
 
-基本流程：准备私有工作区 → 启动 API 和 worker → 提交文件 → 查看结果 → 人工修订、批准 → apply。**新题、新知识点必须人工审核；apply 只更新 `IMPORT_WORKSPACE` 内的数据副本，线上数据需要另行发布。**
+基本流程：准备私有工作区 → 启动 API 和 worker → 提交文件 → 自动解析为草稿 → 业务审核批准 → apply。**扫描 PDF 自动切题与结构化，无需人工整理 Markdown；新题、新知识点仍须业务审核批准。apply 只更新 `IMPORT_WORKSPACE` 内的数据副本，线上数据需要另行发布。**
 
 ## 1. 先选择学科与输入形式
 
@@ -28,10 +28,10 @@
 | 输入 | 处理方式 |
 |---|---|
 | 已整理的 MD/TXT/CSV 卷子或目录 | UTF-8 文本，直接提交，无需 OCR |
-| PDF 卷子 | aipower 上先加载 OCR 环境再启动 worker；可识别整卷 |
+| PDF 卷子（含原卷答案） | aipower 上加载 OCR 环境；worker 自动 OCR → 切题 → 提取答案/选项与推断类型 → 待审草稿，可识别整卷 |
 | PDF 教材目录 | 同样需要 OCR，且必须指定目录页，最多 10 页，不默认识别整本教材 |
 
-每份源文件须为 **1 字节至 1 MiB**，PDF 也受此限制。较大文件先按需要拆分；教材优先只提供目录。普通文字并不自动符合导入格式，卷子至少需要可解析的题干、答案，格式见第 3 节。
+源文件不能为空。**MD/TXT/CSV 上限 16 MiB，PDF 上限 64 MiB；OCR 单段和合并输出上限 64 MiB，修订草稿上限 64 MiB，HTTP 请求上限 65 MiB。** 原 1 MiB 限制已取消。较大 PDF/OCR 上限容纳扫描图像与公式，文本保留较低上限以控制解析缓冲；CLI、worker 有界读取，HTTP 读取前校验长度，避免无界占用内存。工作区应为原文、OCR、草稿及备份预留磁盘。教材仍只提供所需目录页。文本卷格式见第 3.1 节；PDF 按第 3.2 节自动处理。
 
 ## 2. 在 aipower 准备并启动服务
 
@@ -131,9 +131,11 @@ read -erp 'PDF 卷子的文件路径：' PAPER_PDF
 python3 import-cli paper --prefix cnm --file "$PAPER_PDF"
 ```
 
-PDF 的 OCR 结果写入该任务的 `source/normalized.md`，再进入文本解析。**OCR 不保证生成 `answer`、`type`、`topicId` 等结构化字段，不会补答案，也不交付临时题图资源。** 即使 OCR 成功，也可能报 `EMPTY_PAPER` 或存在漏题。
+worker 自动完成 **HOME MinerU OCR → 结构解析 → `draft/questions.json` → `needs_review`**。`source/normalized.md` 保留 OCR 原文，无需改成第 3.1 节的英文键值格式。自动解析连续数字题号（包括 Markdown 标题）、中文大题标题、同行/分行 A–D 选项、中文答案/解析标签，以及卷末编号答案、Markdown 或简单 HTML 答案表；保留公式与子问。
 
-出现这种情况，在私有工作区内查看 OCR 文本，结合原 PDF 人工校对公式、题干、答案、题图和挂点，整理成第 3.1 节的文本格式后创建新任务；若原题依赖尚未补齐的题图，不应批准入库。不要使用返回固定文本的 `ocr_fixture.py` 识别真实卷子。
+题型按选项和答案形态生成 `choice`、`numeric` 或 `short`；未标难度时默认 `standard`，并在 `reports/parse.json.structure` 中注明。原卷未提供挂点时保留 `topicId:null`，同学科挂点建议写入 `reports/parse.json.matches`。审核台负责确认这些业务信息及批准，不承担题目格式整理。
+
+**原 PDF 必须包含明确答案，系统不编造缺失答案。** 无法切题、题号重复/不连续、答案错配或冲突、选项残缺时返回 `PAPER_STRUCTURE_FAILED`；缺少答案为 `PAPER_ANSWER_MISSING`；当前 OCR 协议不持久保存题图，发现图片引用为 `PAPER_ASSET_MISSING`。这些情况整卷失败，并保留 OCR 原文与结构诊断，不以部分成功题替代整卷。由运维根据报告修复引擎/解析能力后 `requeue` 原 PDF，无需用户改写 MD。含图试卷仍有资源支持边界；不要使用返回固定文本的 `ocr_fixture.py` 识别真实卷子。自动结构化测试不能证明所有扫描版式的 OCR 准确率。
 
 ## 4. 教材目录：选择扩库或版本对照
 
@@ -207,7 +209,7 @@ OCR/解析期间 worker 持有全库锁，`status`、`draft`、`diff` 可能返�
 
 **审核台：**在 aipower 的浏览器打开 `http://127.0.0.1:8765/import-login/`，输入本次 token 登录（会话有效期 8 小时）。若教师从自己的电脑远程操作 aipower，应由运维提供 SSH 端口转发；浏览器地址使用实际转发端口。不要开放公网端口或将审核台挂在现有静态站同源路径下。
 
-审核台没有文件上传入口；先用 CLI 提交，再在任务详情中核对原文、草稿、差异和报告。需要修改时使用“修订完整草稿”，编辑五份 JSON 后保存，再重新审阅和批准。保存修订会使旧审批失效。批准之后仍需执行 apply，可使用第 5.3 节的 CLI 命令。
+审核台没有文件上传入口；先用 CLI 提交，再在任务详情中核对原文、草稿、差异和报告。PDF 的题目结构由 worker 自动生成，审核只处理挂点、答案、难度等业务决策。需要业务修改时使用“修订完整草稿”，编辑五份 JSON 后保存，再重新审阅和批准。保存修订会使旧审批失效。批准之后仍需执行 apply，可使用第 5.3 节的 CLI 命令。
 
 **CLI：**先读取差异和完整草稿快照：
 
@@ -229,7 +231,7 @@ python3 import-cli revise "$JOB_ID" --file "$IMPORT_WORKSPACE/reviewed.json" \
 
 只有修订及再次导出均成功才继续；失败时保留 `reviewed.json` 中的人工编辑，按错误处理，不得直接批准。成功后重新打开并审阅 `final-review.json`；不需要修订时审阅首次导出的 `reviewed.json`。`REVIEW_FILE` 指向当前应审阅的文件。至少核对：
 
-- 原卷题数与 `reports.parse` 中解析数、`unparsed` 是否一致，漏题是否已补齐；机器挂点建议是否正确。
+- 题目数量及报告是否完整，机器挂点建议是否正确。PDF 若有切题或答案对齐失败，应交运维处理原任务，不在审核台人工重建题目格式。
 - 每题答案、公式、选项、难度、`topicId` 和必要图示是否可靠；`reports.verify` 是否有表达式核验不一致。
 - `reports.coverage` 和 `reports.validate` 是否仍有未解决缺口；教材新增点是否已经完成第 4.1 节要求。
 
@@ -296,12 +298,16 @@ tail -n 50 "$IMPORT_WORKSPACE/api.log" "$IMPORT_WORKSPACE/worker.log"
 |---|---|
 | `TOKEN_REQUIRED` / `UNAUTHORIZED` | 缺 token 或认证失败；检查当前终端和 API 使用的 token 是否一致 |
 | `INVALID_PREFIX` / `SUBJECT_CONFLICT` | 前缀无效，或题目挂点与学科冲突；按第 1 节选择前缀与同学科 ID |
-| `SOURCE_SIZE` / `ENCODING_REQUIRED` | 文件超过 1 MiB、为空或文本不是 UTF-8；拆分、转换后创建新任务 |
+| `SOURCE_SIZE` / `ENCODING_REQUIRED` | 文本超过 16 MiB、PDF 超过 64 MiB、文件为空或文本不是 UTF-8；使用符合类型上限的源文件后创建任务 |
+| `REQUEST_TOO_LARGE` / `INVALID_DRAFT` | HTTP 请求超过 65 MiB，或修订草稿形状非法/超过 64 MiB；检查请求或业务修订文件 |
 | `OCR_REQUIRED` | worker 未配置 OCR；aipower 按第 2 节加载环境并重启 worker，再重试原任务，或改用校对文本 |
 | `OCR_PAGES_REQUIRED` | 教材缺目录页或页码范围不合法；限定最多 10 页，改参数后重新提交任务 |
 | `OCR_CONFIG_INVALID` | OCR 命令 JSON argv 或超时配置无效；运维检查 worker 环境并在空闲时重启 |
-| `OCR_TIMEOUT` / `OCR_FAILED` / `OCR_OUTPUT_INVALID` | OCR 超时、启动/识别失败或输出非法；原 PDF 保留，检查环境、模型和页数，排除原因后重试 |
-| `EMPTY_PAPER` / `EMPTY_TOC` / `METADATA_CONFLICT` | 没有可解析题目/目录，或文件元数据与参数冲突；按规定格式整理文本，修正后新建任务 |
+| `OCR_TIMEOUT` / `OCR_FAILED` / `OCR_OUTPUT_INVALID` | OCR 超时、启动/识别失败或输出非法（非普通非空 UTF-8 文件、超 64 MiB 等）；原 PDF 保留，运维检查环境、模型、日志及页数后重试 |
+| `PAPER_STRUCTURE_FAILED` | PDF 无法切题、题号重复/不连续、答案错配/冲突、选项不完整或版式不支持；保留完整结构诊断，交运维修复解析能力后重试原 PDF，无需改写 MD |
+| `PAPER_ANSWER_MISSING` | 原卷或 OCR 结果缺少某题明确答案；交运维核查原 PDF 与识别结果，不生成猜测答案 |
+| `PAPER_ASSET_MISSING` | OCR 含未持久保存的题图；当前不能生成完整可入库题目，交运维处理资源支持，不得批准残缺题 |
+| `EMPTY_PAPER` / `EMPTY_TOC` / `METADATA_CONFLICT` | 结构化文本没有可解析题目/目录，或元数据与参数冲突；核对第 3.1/4 节的文本契约。PDF 自动路径使用上述专用结构失败码 |
 | `TOPIC_ID_REQUIRED` | 题目挂点未确认，或版本对照缺显式 ID；修订草稿或补齐对照输入 |
 | `REVIEW_REQUIRED` | 新点、新题等尚未人工批准；审核最终稿后再 apply |
 | `DRAFT_CHANGED` | 所见稿或获批稿已经变化；重新读取、审阅、批准 |

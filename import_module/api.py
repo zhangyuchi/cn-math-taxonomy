@@ -15,9 +15,9 @@ from urllib.parse import parse_qs, unquote, urlsplit
 
 from .apply import apply_job
 from .store import CODE_ROOT, ImportErrorResponse, Service, read_json
+from .limits import MAX_REQUEST_BYTES, MIB
 
 UI_ROOT = CODE_ROOT / 'review-ui'
-MAX_REQUEST_BYTES = 2 * 1024 * 1024
 
 
 def _multipart(content_type, body):
@@ -106,7 +106,7 @@ def make_server(service, token, port=8765, secure_cookie=False):
             except ValueError as exc:
                 raise ImportErrorResponse('INVALID_LENGTH', 'Content-Length 不合法', 400) from exc
             if size < 0 or size > MAX_REQUEST_BYTES:
-                raise ImportErrorResponse('REQUEST_TOO_LARGE', '请求体不得超过 2 MiB', 413)
+                raise ImportErrorResponse('REQUEST_TOO_LARGE', f'请求体不得超过 {MAX_REQUEST_BYTES // MIB} MiB', 413)
             content = self.rfile.read(size)
             if len(content) != size:
                 raise ImportErrorResponse('INCOMPLETE_BODY', '请求体未完整接收', 400)

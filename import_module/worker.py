@@ -83,7 +83,7 @@ def _process(service, job_id):
             if pdf:
                 content = normalize_pdf(service, meta)
             if meta['type'] == 'paper':
-                text, draft, details = parse_paper(service, meta, content, '.md' if pdf else None)
+                text, draft, details = parse_paper(service, meta, content, '.md' if pdf else None, ocr=pdf)
             else:
                 # OCR统一生成Markdown，不按原PDF后缀尝试解析二进制。
                 parsed_meta = dict(meta, sourceFiles=['source/normalized.md']) if pdf else meta
@@ -102,7 +102,7 @@ def _process(service, job_id):
         except ImportErrorResponse as exc:
             meta['status'] = 'failed'
             meta['error'] = {'code': exc.code, 'error': str(exc)}
-            atomic_json(directory / 'reports/parse.json', dict(ok=False, **meta['error']))
+            atomic_json(directory / 'reports/parse.json', dict(ok=False, **meta['error'], **(exc.details or {})))
             service.save(meta)
     if automatic:
         try:

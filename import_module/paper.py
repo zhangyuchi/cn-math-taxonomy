@@ -1,10 +1,10 @@
 """文本卷切题与确定性挂点建议；建议只写报告，绝不自动选定挂点。"""
 import csv
 import io
-import json
 import re
 
 from .store import ImportErrorResponse, read_json
+from .paper_ocr import parse_choices, structure_paper
 
 FIELDS = {'topicId', 'difficulty', 'type', 'prompt', 'answer', 'explanation', 'verify', 'choices', 'unordered'}
 HEADER = re.compile(r'^\s*(?:#{1,6}\s+Q\d+|Q\d+|\d+[.、])\s*(.*)$', re.I)
@@ -45,22 +45,6 @@ def _blocks(text, suffix):
     return blocks
 
 
-def _choices(value):
-    """接受JSON选项或规范A/B/C行，保留现有choice schema。"""
-    if isinstance(value, list):
-        return value
-    value = value.strip()
-    if value.startswith('['):
-        return json.loads(value)
-    result = []
-    for line in re.split(r'\n|\s*;\s*', value):
-        match = re.fullmatch(r'\s*[-*]?\s*([A-D])\s*[:：]\s*(.+)', line)
-        if not match:
-            raise ValueError('选项须为JSON或A:文本格式')
-        result.append({'key': match[1], 'text': match[2]})
-    return result
-
-
 def _suggest(prompt, topics):
     """按名称重合及二字词重合排序，同分按id稳定排序，最多五项。"""
     def score(topic):
@@ -71,22 +55,27 @@ def _suggest(prompt, topics):
     return [tid for points, tid in sorted(ranked, key=lambda row: (-row[0], row[1])) if points > 0][:5]
 
 
-def parse_paper(service, meta, content, suffix=None):
+def parse_paper(service, meta, content, suffix=None, *, ocr=False):
     """将成功块转换为待审题数组，未知挂点保持null；零题明确失败。
 
     match/suggestedTopicIds等机器推断位于parse报告，不污染正式题schema。
-    缺答案/题干的块进入unparsed；有题即可待审，结构问题由候选校验报告呈现。
+    文本缺答案/题干的块进入unparsed；PDF 自动切题且不发布残缺的部分卷。
     """
     try:
         text = content.decode('utf-8-sig')
     except UnicodeDecodeError as exc:
         raise ImportErrorResponse('ENCODING_REQUIRED', '试卷文本须为UTF-8') from exc
     suffix = suffix or '.' + meta['sourceFiles'][0].rsplit('.', 1)[-1]
+    structure = None
+    if ocr:
+        rows, structure = structure_paper(text)
+    else:
+        rows = _blocks(text, suffix)
     topics = [t for t in read_json(service.data / 'topics.json')
               if t['id'].startswith(meta['subjectPrefix'] + '_') and not t.get('external')]
     index = {t['id']: t for t in topics}
     questions, unparsed, matches = [], [], []
-    for number, row in enumerate(_blocks(text, suffix), 1):
+    for number, row in enumerate(rows, 1):
         try:
             if None in row or any(v is None for v in row.values()):
                 raise ValueError('CSV行列不一致')
@@ -105,7 +94,7 @@ def parse_paper(service, meta, content, suffix=None):
                      difficulty=row.get('difficulty') or 'standard', prompt=row['prompt'].strip(),
                      answer=row['answer'].strip(), explanation=row.get('explanation') or '导入草稿，待审：请补充解析')
             if row.get('choices'):
-                q['choices'] = _choices(row['choices'])
+                q['choices'] = parse_choices(row['choices'])
             if row.get('verify'):
                 q['verify'] = row['verify'].strip()
             if row.get('unordered'):
@@ -117,7 +106,13 @@ def parse_paper(service, meta, content, suffix=None):
                                 suggestedTopicIds=[] if tid else _suggest(q['prompt'], topics)))
         except (ValueError, TypeError) as exc:
             unparsed.append(dict(block=number, reason=str(exc), source=row))
+    if ocr and (unparsed or not questions):
+        raise ImportErrorResponse('PAPER_STRUCTURE_FAILED', 'OCR 试卷存在不完整题块',
+                                  details=dict(unparsed=unparsed, structure=structure))
     if not questions:
         raise ImportErrorResponse('EMPTY_PAPER', '0题成功解析；请按编号块或CSV规范提供题干与答案')
     draft = dict(topics=[], dependencies=[], questions=questions, mappings={}, standards_suggestions=[])
-    return text, draft, dict(unparsed=unparsed, matches=matches)
+    details = dict(unparsed=unparsed, matches=matches)
+    if structure is not None:
+        details['structure'] = structure
+    return text, draft, details

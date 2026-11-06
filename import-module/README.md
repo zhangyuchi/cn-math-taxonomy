@@ -1,9 +1,10 @@
 # 导入教材与试卷
 
-模块提供 CLI → 认证API → 单worker → 草稿修订/审核 → apply。支持教材TOC（expand/mappings_only）、文本卷MD/TXT/CSV、可开关PDF OCR插件接口，以及经过完整校验的可恢复多文件扩库。
+模块提供 CLI → 认证API → 单worker → 草稿业务审核 → apply。支持教材TOC（expand/mappings_only）、文本卷MD/TXT/CSV、PDF OCR 后自动结构化，以及经过完整校验的可恢复多文件扩库。扫描卷不要求人工改写 Markdown。
 新点/新题必须人工批准；仅纯mappings可在校验成功后自动应用。apply只更新独立工作副本，**不会自动发布线上数据**。
 
 范围、事务与审批契约见[修订规格附录D](../docs/superpowers/specs/2026-11-03-import-module-design.md#附录-d2026-11-06-完整交付准入优先于附录-c-的骨架范围)、[完整计划](../docs/superpowers/plans/2026-11-06-import-module-completion.md)和[验收记录](../docs/superpowers/reviews/2026-11-06-import-module-completion-review.md)。旧骨架审核只描述历史。
+本次文件上限和扫描卷自动结构化以[自动化规格](../docs/superpowers/specs/2026-11-06-pdf-paper-automation.md)及[自动化验收记录](../docs/superpowers/reviews/2026-11-06-pdf-paper-automation-review.md)为准。
 
 ## 快速自测
 
@@ -13,6 +14,7 @@
 ```bash
 python3 -W error::ResourceWarning -m unittest discover -s tests -p 'test_import_module.py' -v
 python3 -W error::ResourceWarning -m unittest discover -s tests -p 'test_ocr_mineru.py' -v
+python3 -W error::ResourceWarning -m unittest discover -s tests -p 'test_paper_automation.py' -v
 python3 -m unittest discover -s tests -p 'test_publish.py' -v
 python3 import-module/smoke.py
 ```
@@ -45,7 +47,7 @@ export IMPORT_API_URL=http://127.0.0.1:8765
 
 两个终端使用相同环境，分别运行 `python3 import-api` 和 `python3 import-worker`。
 API固定绑定loopback；worker支持 `--once`。缺workspace/token失败关闭，不隐式使用仓库目录。
-源MD/TXT/CSV/PDF限1MiB；HTTP请求限2MiB；修订草稿限1MiB。源必须UTF-8（PDF由插件转换）。
+文件大小策略统一定义在 `import_module/limits.py`：MD/TXT/CSV 源上限 **16 MiB**，PDF 源 **64 MiB**，OCR 单段及合并输出 **64 MiB**，入站修订草稿 **64 MiB**，HTTP 请求 **65 MiB**（包含 multipart/JSON 元数据）。源文件不能为空；文本必须 UTF-8，PDF 由插件转换。CLI 与 worker 回读最多读取对应上限加一字节，HTTP 在读取前检查长度；保留有限上限以约束内存缓冲，PDF/OCR 为扫描图像和公式预留更大空间。单 worker、OCR 超时与临时目录清理继续生效，工作区需为原文、草稿及审计备份预留磁盘。
 
 ## 教材与版本对照
 
@@ -140,8 +142,8 @@ python3 import-cli textbook --mode expand --prefix cnm --file toc.pdf --ocr-page
 python3 import-cli paper --prefix cnm --file exam.pdf
 ```
 
-fixture只检查PDF标记并输出原创固定MD，**不识别PDF，不代表OCR准确率验收**。成功后只发布 `source/normalized.md`，进入与文本相同的流水线，机器内容仍须校对。
-`IMPORT_OCR_TIMEOUT` 默认120秒，上限600；超时终止整个插件进程组。输出必须非空普通文件、非符号链接、UTF-8、≤1MiB。成功报告保留pluginSha256/confidence=unreviewed；失败删除旧normalized，保留原PDF与错误。
+fixture只检查PDF标记并输出原创固定MD，**不识别PDF，不代表OCR准确率验收**。成功后发布 `source/normalized.md`；PDF paper 自动生成 `draft/questions.json`，进入业务审核。
+`IMPORT_OCR_TIMEOUT` 默认120秒，上限600；超时终止整个插件进程组。输出必须非空普通文件、非符号链接、UTF-8、≤64 MiB。成功报告保留pluginSha256/confidence=unreviewed；OCR失败删除旧normalized，保留原PDF与错误；结构解析失败仍保留已成功生成的 OCR 原文及结构诊断。
 错误：`OCR_REQUIRED`、`OCR_PAGES_REQUIRED`、`OCR_CONFIG_INVALID`、`OCR_FAILED`、`OCR_TIMEOUT`、`OCR_OUTPUT_INVALID`。
 
 ### aipower 的 HOME MinerU 安装
@@ -198,7 +200,11 @@ timeout -k 5s 600s /usr/bin/python3 \
 
 `--pages` 为 1-based，最多10页，与 worker 相同；上述页码分别转换为 `-s 0 -e 1`、`-s 4 -e 4`，按序合并，不识别间隙页。教材不允许空页码，paper 可用 `--pages ''` 识别整卷。适配器使用每任务临时目录，仅在全部页段成功且合并 MD 合法后写目标；临时图像及中间文件退出即清理。超时仅由 worker 统一负责，独立运行时使用上述外层 `timeout`。
 
-与 fixture 的区别：fixture 返回固定测试文本；此适配器实际调用本地 MinerU。OCR Markdown 不保证包含导入试卷所需的 `topicId/answer/type` 等结构化字段，仍可能因文本结构而解析失败；需根据报告修订为本文“文本卷”的格式再导入。公式、题图、目录层级及识别文本均须人工校对，适配器不会生成缺失答案或绕过审核，也不交付临时题图资源。
+与 fixture 的区别：fixture 返回固定测试文本；此适配器实际调用本地 MinerU。PDF paper 的后续结构解析由 worker 自动执行，不要求 OCR 生成英文键值字段，也不要求用户改写 MD：识别连续数字题号、中文大题标题、同行/分行 A–D 选项、中文答案/解析标签，以及卷末编号答案、Markdown/简单 HTML 答案表。子问与公式保留；依据选项及答案形态生成 `choice`、`numeric` 或 `short`，默认难度 `standard`，未知挂点保留 null，建议写报告。已有英文键值 OCR 插件输出继续兼容。
+
+业务审核确认答案、难度和挂点后批准，不承担格式整理。原卷必须含明确答案；结构解析不猜测答案。无可识别题号、题号重复/不连续、答案冲突/错配、选项残缺等返回 `PAPER_STRUCTURE_FAILED`；缺答案返回 `PAPER_ANSWER_MISSING`；含未持久保存的图片引用返回 `PAPER_ASSET_MISSING`。PDF 遇到任一上述问题整卷失败，不用少量成功题替代完整试卷，不发布本轮部分草稿。诊断及原文写入 `reports/parse.json` 和 `source/normalized.md`，由运维修复识别/解析能力后重试原 PDF；无需用户整理 Markdown。当前不交付临时题图，依赖图片的卷不在自动成功范围。OCR 识别质量仍需与结构链路测试区分。
+
+自动化夹具 `tests/fixtures/paper-mineru.md` 是无英文结构字段的原创中文 OCR 结果；测试完整执行 HOME 适配器、worker 和真实结构解析，仅替代耗时引擎。其通过证明自动路径及字段，不代表任意真实扫描件的识别准确率。
 
 **qqvps 不配置此命令、不安装重 OCR。** 保持 `deploy/systemd/import-worker.service.example` 和安装器的 `IMPORT_OCR_COMMAND=`；VPS 使用已校对的文本导入。fixture 继续只用于协议验收，不能代替真实识别。
 
@@ -206,7 +212,7 @@ timeout -k 5s 600s /usr/bin/python3 \
 
 - queued→running→needs_review→approved→applied；解析failed，待审可rejected；failed/rejected可重试同一源，改源须新job。
 - 新点/题未经人工批准 `REVIEW_REQUIRED`。审批绑定完整draft摘要；外部改动后apply `DRAFT_CHANGED` 并退回needs_review。
-- 五文件修订也有revision-intent；prepared中断时读取/批准返回 `REVISION_PENDING`，worker或API启动显式恢复旧草稿并保持待审。恢复/重解析只清理本模块生成的普通临时文件，未知文件和符号链接仍拒绝；worker生成的大before备份按结构/摘要恢复，不受入站修订1MiB限制。不会批准混合修订。
+- 五文件修订也有revision-intent；prepared中断时读取/批准返回 `REVISION_PENDING`，worker或API启动显式恢复旧草稿并保持待审。恢复/重解析只清理本模块生成的普通临时文件，未知文件和符号链接仍拒绝；worker生成的大before备份按结构/摘要恢复，不受入站修订64 MiB限制。不会批准混合修订。
 - mappings是单文件原子replace，兼容骨架intent恢复；新点/边/题使用**可恢复多文件事务**。备份/stage及目录先fsync，再prepared；全部替换后committed是提交点；最后applied。
 - 普通故障补偿回滚；prepared进程死亡恢复旧值，committed之后恢复applied。回滚自身再次失败保留prepared，后续可重入。恢复前检查全部目标、备份和候选摘要；第三种内容/损坏备份 `RECOVERY_CONFLICT`，阻止全部新apply，不覆盖外部改动。
 - 全库锁→job锁，候选/diff/审核快照与写入互斥。GET/解析不悄悄修复正式库，未完成事务时 `TRANSACTION_PENDING`；显式apply或worker/API启动先恢复历史事务。BUSY为409，稍后重试。
