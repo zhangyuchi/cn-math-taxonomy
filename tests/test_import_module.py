@@ -460,8 +460,9 @@ class CompleteAcceptance(WorkspaceCase):
         run_once(self.service)
         return job
 
-    def completed_expand(self):
-        job = self.expand()
+    def completed_expand(self, **parameters):
+        job = self.service.create_job('textbook', 'toc.md', TOC,
+              dict(mode='expand', subjectPrefix='cnm', **parameters))['jobId']
         run_once(self.service)
         draft = self.service.draft(job)
         for topic in draft['topics']:
@@ -662,6 +663,116 @@ class CompleteAcceptance(WorkspaceCase):
         self.assert_code('VALIDATION_FAILED', lambda: apply_job(self.service, job))
         self.assertEqual(self.formal_hashes(), self.baseline)
 
+    def _crash_before_draft_replace(self, job, action):
+        script = '''import os,sys
+from pathlib import Path
+from import_module.store import Service
+from import_module.apply import recover_pending
+from import_module.worker import run_once
+service=Service(sys.argv[1]); job=sys.argv[2]; action=sys.argv[3]
+original=os.replace
+def crash(source,target):
+    target=Path(target)
+    if target.parent.name=='draft' and target.name=='topics.json': os._exit(77)
+    return original(source,target)
+os.replace=crash
+if action in ('revise','revise_reduced'):
+    draft=service.draft(job)
+    if action=='revise_reduced':
+        draft['topics']=draft['topics'][:1]; draft['dependencies']=[]; draft['standards_suggestions']=draft['standards_suggestions'][:1]
+    else: draft['questions'][0]['explanation']+=' 子进程修订。'
+    service.revise(job,draft,service.draft_digest(job))
+elif action=='recover': recover_pending(service)
+else: run_once(service)
+'''
+        process = subprocess.run([sys.executable, '-c', script, str(self.workspace), job, action], cwd=ROOT)
+        self.assertEqual(process.returncode, 77)
+        self.assertTrue(list((self.service.job_dir(job)/'draft').glob('.topics.json-*')))
+
+    def test_revision_replace_before_crash_and_recovery_reentry(self):
+        from import_module.apply import recover_pending
+        job = self.paper()
+        before = self.service.draft(job)
+        self._crash_before_draft_replace(job, 'revise')
+        self.assert_code('REVISION_PENDING', lambda: self.service.snapshot(job))
+        self._crash_before_draft_replace(job, 'recover')
+        recover_pending(self.service)
+        self.assertEqual(self.service.draft(job), before)
+        self.assertEqual(self.service.get(job)['status'], 'needs_review')
+        self.assertFalse(list((self.service.job_dir(job)/'draft').glob('.*')))
+        self.assertEqual(self.formal_hashes(), self.baseline)
+
+    def test_large_generated_draft_backup_recovers_without_inbound_size_limit(self):
+        from import_module.apply import recover_pending
+        from import_module.store import json_bytes
+        content = ('grade: 7\nterm: 上\n# 原创恢复测试目录\n' +
+                   '\n'.join('## 条目'+str(i)+' 原创目录测试标题'*25 for i in range(600))).encode()
+        self.assertLess(len(content), 1024*1024)
+        job = self.service.create_job('textbook', 'toc.md', content,
+                                      dict(mode='expand', subjectPrefix='cnm'))['jobId']
+        run_once(self.service)
+        before = self.service.draft(job)
+        self.assertGreater(len(json_bytes(before)), 1024*1024)
+        self._crash_before_draft_replace(job, 'revise_reduced')
+        recover_pending(self.service)
+        self.assertEqual(self.service.draft(job), before)
+        self.assertEqual(self.service.get(job)['status'], 'needs_review')
+        self.assertEqual(self.formal_hashes(), self.baseline)
+
+    def test_worker_replace_before_crash_cleans_owned_temporary_files(self):
+        job = self.expand()
+        self._crash_before_draft_replace(job, 'worker')
+        run_once(self.service)
+        self.assertEqual(self.service.get(job)['status'], 'needs_review')
+        self.assertEqual(len(self.service.draft(job)['topics']), 2)
+        self.assertFalse(list((self.service.job_dir(job)/'draft').glob('.*')))
+        self.assertEqual(self.formal_hashes(), self.baseline)
+
+    def test_recovery_does_not_remove_unknown_files_or_temporary_symlinks(self):
+        from import_module.apply import recover_pending
+        job = self.paper()
+        self._crash_before_draft_replace(job, 'revise')
+        directory = self.service.job_dir(job)/'draft'
+        unknown = directory/'unknown.json'
+        unknown.write_text('{}')
+        self.assert_code('INVALID_DRAFT', lambda: recover_pending(self.service))
+        self.assertTrue(unknown.exists())
+        unknown.unlink()
+        temporary = next(directory.glob('.topics.json-*'))
+        temporary.unlink()
+        secret = self.workspace/'unrelated.txt'
+        secret.write_text('preserve')
+        temporary.symlink_to(secret)
+        self.assert_code('INVALID_PATH', lambda: recover_pending(self.service))
+        self.assertTrue(temporary.is_symlink())
+        self.assertEqual(secret.read_text(), 'preserve')
+        temporary.unlink()
+        recover_pending(self.service)
+        self.assertEqual(self.service.get(job)['status'], 'needs_review')
+
+    def test_four_file_failure_rolls_back_new_mapping_creation(self):
+        import import_module.transactions as tx
+        job = self.completed_expand(edition='fourfiles_math')
+        draft = self.service.draft(job)
+        draft['mappings'] = dict(edition='fourfiles_math', label='原创四文件回滚版本', status='draft',
+            source='原创测试目录', entries=[dict(topicId=draft['topics'][0]['id'], grade=7, term='上')])
+        self.service.revise(job, draft, self.service.draft_digest(job))
+        self.service.approve(job)
+        original = tx.atomic_bytes
+        target = self.service.data/'mappings/fourfiles_math.json'
+        def fail(path, content):
+            original(path, content)
+            if Path(path) == target:
+                raise OSError('第四文件创建后故障')
+        with mock.patch.object(tx, 'atomic_bytes', side_effect=fail):
+            with self.assertRaises(OSError):
+                apply_job(self.service, job)
+        self.assertFalse(target.exists())
+        self.assertEqual(self.formal_hashes(), self.baseline)
+        self.assertEqual(self.service.get(job)['status'], 'approved')
+        apply_job(self.service, job)
+        self.assertEqual(self.service.get(job)['status'], 'applied')
+
     def test_revision_crash_never_exposes_or_approves_mixed_version(self):
         import import_module.revision as revision
         from import_module.apply import recover_pending
@@ -756,6 +867,24 @@ apply_job(service,sys.argv[2])
         self.assertEqual(self.formal_hashes(), self.baseline)
         apply_job(self.service, job)
         self.assertEqual(self.service.get(job)['status'], 'applied')
+
+    def test_id_competition_remaps_mapping_entries_with_new_topics(self):
+        first = self.completed_expand()
+        second = self.completed_expand(edition='collision_math')
+        draft = self.service.draft(second)
+        old_id = draft['topics'][0]['id']
+        draft['mappings'] = dict(edition='collision_math', label='原创并发导入测试版本', status='draft',
+                source='原创测试目录，非真实教材', entries=[dict(topicId=old_id, grade=7, term='上', chapter='新点对照')])
+        self.service.revise(second, draft, self.service.draft_digest(second))
+        self.service.approve(second)
+        apply_job(self.service, first)
+        apply_job(self.service, second)
+        intent = read_json(self.service.job_dir(second) / 'review/apply-intent.json')
+        new_id = intent['idMap'][old_id]
+        self.assertNotEqual(old_id, new_id)
+        mapping = read_json(self.service.data / 'mappings/collision_math.json')
+        self.assertEqual(mapping['entries'][0]['topicId'], new_id)
+        self.assertEqual(len(intent['targets']), 4)
 
     def test_recovery_checks_all_targets_and_backups_before_any_restore(self):
         import import_module.transactions as tx

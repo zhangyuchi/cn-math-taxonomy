@@ -99,8 +99,16 @@ F1 审核者所见摘要与单快照→DC7/V7；F2 revision-intent崩溃回滚�
 
 ## 实施证据更新
 
-46项导入unittest、3项发布回归、完整独立进程smoke、本地Chromium、原validator与95/38/8 JS回归均通过；93份既有JSON摘要不变。初步实现提交32f3d10已普通push并部署VPS，current迁移、独立API/worker、13文件健康、gate真路径和实际失败回滚均有证据。
+52项导入unittest、5项发布回归、完整独立进程smoke、本地Chromium、原validator与95/38/8 JS回归均通过；93份既有JSON摘要不变。初步实现提交32f3d10已普通push并部署VPS，current迁移、独立API/worker、13文件健康、gate真路径和实际失败回滚均有证据。
 I-9（验收阶段，resolved）：原线上浏览器30秒预算未完成首次JSON加载；请求诊断确认约50秒全部核心请求完成、首页870点且无应用错误。advisor补充选择A，不改nginx；以单页90秒及数据就绪条件完成多页验收。现仓库统计collect DNS失败另行记录，非本轮新增错误。
 最终多页验收与advisor终审、最终SHA推送/发布结果见完整验收记录。
 
 I-10（本地完成审查，resolved）：发现手工物理mathLinks采用现有{id, reason}对象schema，而候选ID重映射误当字符串数组。先用物理草稿修订回归复现TypeError，再按对象id字段重映射，保留reason与完整validator规则；不影响正式数据。新增“全部目标已写、commit尚未持久”恢复用例，并扩展每一目标写前/写后故障覆盖。
+
+## 终审修订闭合
+
+I-11（resolved，DC8）：同job新增点的mappings引用需同步ID重映射；补真实并发复现与四文件新增mapping回滚测试。
+I-12（resolved，DC7）：进程死亡留下atomic临时文件阻断恢复；显式恢复/worker重解析受锁保护地仅清理本模块普通临时文件，保留未知文件/符号链接拒绝，含恢复再次中断用例。
+I-13（resolved，DC10）：发布恢复曾依赖网络/新ref成功；改为独占锁内先恢复，网络/非法ref失败不再阻断旧站恢复，5项发布回归通过。
+I-14（resolved，DC7）：worker生成before备份可大于入站限制；分离入站大小策略与恢复结构/摘要验证，保留after 1MiB上限。
+以上由新advisor独立终审核查，代码与聚焦测试已修复，最终整体验收/生产更新和GO仍需记录。

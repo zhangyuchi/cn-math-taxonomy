@@ -1,7 +1,7 @@
 # 导入模块完整交付审核与验收
 
 日期：2026-11-06（Asia/Shanghai）。范围：本轮用户A–F（完整v1、OCR接口、qqvps切流）。此记录与上一轮骨架审核分别保留。
-当前状态：实现、本地验收、生产切流、实际回滚已完成；线上多页浏览器已通过，最终46项边界回归已通过，待独立advisor终审。
+当前状态：实现、本地验收、生产切流、实际回滚已完成；线上多页浏览器已通过，最终52项边界回归已通过，待独立advisor终审。
 
 ## 开工审核与主代理准入
 
@@ -22,9 +22,9 @@
 
 | 命令/场景 | 结果 |
 |---|---|
-| `python3 -W error::ResourceWarning -m unittest discover -s tests -p 'test_import_module.py' -v` | 46项通过；含旧mappings回归、paper MD/TXT/CSV/choice、十前缀、建议/null、unparsed/零题、mismatch、审核摘要竞态、五文件修订中断 |
+| `python3 -W error::ResourceWarning -m unittest discover -s tests -p 'test_import_module.py' -v` | 52项通过；含旧mappings回归、paper MD/TXT/CSV/choice、十前缀、建议/null、unparsed/零题、mismatch、审核摘要竞态、五文件修订中断 |
 | 多文件故障注入 | 三文件真实expand成功；每个替换前后失败恢复旧字节；真实子进程os._exit(77)后显式恢复；commit后meta故障；回滚再次故障；第三种摘要、坏备份拒绝全部恢复；跨任务及ID竞争 |
-| `python3 -m unittest discover -s tests -p 'test_publish.py' -v` | 3项通过；真实archive/HTTP与受控systemd，切前失败、首次切后失败恢复current原不存在与旧服务、后续失败恢复旧current/drop-in |
+| `python3 -m unittest discover -s tests -p 'test_publish.py' -v` | 5项通过；真实archive/HTTP与受控systemd，切前失败、首次切后失败恢复current原不存在与旧服务、后续失败恢复旧current/drop-in |
 | `python3 import-module/smoke.py` | 独立API/CLI/worker通过；paper人工批准后applied；教材补齐后3文件apply且原validator通过；mappings自动applied；OCR关闭/fixture成功 |
 | `CHROME=... .codex-run/browser-venv/bin/python import-module/browser-smoke.py` | Chromium153.0.8010.12；登录、完整JSON修订、过期页面批准409、paper/mappings apply、驳回、原文XSS仅作文本、390px无横向溢出；pageErrors=[] |
 | `python3 scripts/validate.py` | VALIDATION PASSED，3297点/4868边/13335题；保留基线cnm_130/cnm_192空课标警告 |
@@ -58,10 +58,23 @@
 
 线上首页独立诊断确认约50秒加载完成（数学870点），核心请求全部完成，应用pageErrors/load-error均为空。既有topics约2.8MiB、questions约8.8MiB，公网首次下载较慢；既有统计collect请求发生DNS失败，单列非核心问题，未将其伪称正常。advisor补充顾问判断采用保持nginx的方案A：该证据不构成部署故障，验收以单页90秒和真实就绪/交互为准，不新增本轮性能改造。若核心页面90秒仍不就绪继续诊断，不任意加时。线上最终Chromium153多页验收已通过（`.codex-run/online-browser.log`）：首页数据计数就绪、图谱canvas显示、诊断真实交互就绪、children页均200且非登录页；pageErrors=[]。SSH独立18765端口生产审核台登录成功、未认证API401、navigator.serviceWorker.controller=null。截图为 `.codex-run/online-{home,explore,diagnose,children,import-review}.png`，已实际查看图谱与移动审核台截图。
 
-首次检查使用networkidle/30秒未通过，诊断后改为明确数据就绪及90秒上限。没有把失败隐藏或仅靠延长等待声称正常；同一现场独立诊断记录显示核心JSON实际完成，并按advisor补充判断保留首次下载成本与统计DNS问题。最终部署提交在Git交付后记录。
+首次检查使用networkidle/30秒未通过，诊断后改为明确数据就绪及90秒上限。没有把失败隐藏或仅靠延长等待声称正常；同一现场独立诊断记录显示核心JSON实际完成，并按advisor补充判断保留首次下载成本与统计DNS问题。修复mathLinks后的提交 `02fcdec687b5dfc2ae866a2bb0863d74945b1f45` 也已普通push，并经增量bundle核验后重新发布静态及独立导入服务；健康/鉴权检查通过，现有workspace不覆盖。最终仅文档/审计提交的发布SHA以 `.codex-run/last-message.md` 为准，避免文档提交自引用。
 
 ## 终审与交付
 
-最终advisor尚待全部完成后另行spawn；主代理终判、生产SHA、提交/push结果待实证补齐。
+全部实现、自测和现场部署后，新的advisor终审待另行spawn；终审与主代理最终判定待实证补齐。已交付实现32f3d10与修复02fcdec，均普通push，无force；最终文档提交另记。
 明确不包含：真实OCR引擎/中文模型的识别准确率验收（本轮允许fixture接口验收）、Word、公网上传、多租户、学生端拆包。它们不是本轮未完成A–F。
 工作区数据上线需要显式Git交付和单独发布；本轮生产不应用真实新知识数据，避免未经内容审核的演示题上线。
+
+## 独立终审发现与修复过程
+
+终审实际spawn新advisor `/root/final_advisor`，与开工顾问分开。尚未据中间审阅声称GO；以下经主代理核查并补回归：
+
+| 项目 | 独立证据与原因 | 修复与针对性验证 |
+|---|---|---|
+| F-ID-MAPPING（主代理复现，advisor核查） | 两个完整expand竞争，第二job新点应316→318，mapping仍指316，原validator因316已存在而通过 | mappings.entries.topicId与新点同步重映射；真实四文件成功及第4个新文件写后失败回滚（删除新mapping） |
+| F-REV-TEMP | 真正os._exit于临时文件写好/rename前，残留.<draft>.json-随机名让严格集合检查阻断revision与worker恢复 | 只在显式恢复/queued重解析、全库→job锁内清理精确本模块临时名且普通文件；GET不清理，未知文件/符号链接保留并拒绝；真实revision中断、回滚再次中断、worker重入通过 |
+| F-PUBLISH-ORDER | 遗留switching时fetch失败/非法新ref，原顺序在恢复前退出，current仍坏 | 发布锁内首先恢复历史意图，再fetch/ref解析；新增两项先红后绿，完整5项发布回归通过 |
+| F-REV-SIZE | 合法TOC源约364KiB生成>1MiB草稿，删减修订后中断，原恢复误套入站1MiB限制 | before备份验证结构/完整sha，入站/after继续限1MiB；实际进程死亡后可恢复大before，不放宽正式validator |
+
+主代理使用receiving-code-review先核查反馈与源码、再补复现；advisor独立复现上述恢复问题，并独立验证线上三服务、SHA、工作区权限、鉴权/静态隔离与真实gate路径。最新主代理完整52项导入回归exit0（120.544s）、5项发布回归exit0；真实smoke及本地Chromium再次通过，93份SHA一致。advisor独立51项全量（修复前不含新增大草稿用例）+新增大草稿恢复、5项发布、真实smoke、原validator和JS95/38/8均通过，确认四项代码问题闭合，无新增阻塞。最新修复提交、线上更新及最终GO待其只读核对后补齐。

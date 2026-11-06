@@ -107,6 +107,12 @@ def prepared_draft(service, meta, draft):
         if not isinstance(suggestion, dict):
             raise ImportErrorResponse('INVALID_DRAFT', '课标建议须为对象')
         suggestion['topicId'] = remap.get(suggestion.get('topicId'), suggestion.get('topicId'))
+    # expand也可带版本对照，引用必须随新增点一起重编号，不能挂到竞争job的旧ID。
+    entries = result['mappings'].get('entries')
+    if isinstance(entries, list):
+        for entry in entries:
+            if isinstance(entry, dict) and isinstance(entry.get('topicId'), str):
+                entry['topicId'] = remap.get(entry['topicId'], entry['topicId'])
     questions = read_json(service.data / 'questions.json')
     q_counters = {}
     for q in questions:

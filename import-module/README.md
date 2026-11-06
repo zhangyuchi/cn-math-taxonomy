@@ -148,7 +148,7 @@ fixture只检查PDF标记并输出原创固定MD，**不识别PDF，不代表OCR
 
 - queued→running→needs_review→approved→applied；解析failed，待审可rejected；failed/rejected可重试同一源，改源须新job。
 - 新点/题未经人工批准 `REVIEW_REQUIRED`。审批绑定完整draft摘要；外部改动后apply `DRAFT_CHANGED` 并退回needs_review。
-- 五文件修订也有revision-intent；prepared中断时读取/批准返回 `REVISION_PENDING`，worker或API启动显式恢复旧草稿并保持待审。不会批准混合修订。
+- 五文件修订也有revision-intent；prepared中断时读取/批准返回 `REVISION_PENDING`，worker或API启动显式恢复旧草稿并保持待审。恢复/重解析只清理本模块生成的普通临时文件，未知文件和符号链接仍拒绝；worker生成的大before备份按结构/摘要恢复，不受入站修订1MiB限制。不会批准混合修订。
 - mappings是单文件原子replace，兼容骨架intent恢复；新点/边/题使用**可恢复多文件事务**。备份/stage及目录先fsync，再prepared；全部替换后committed是提交点；最后applied。
 - 普通故障补偿回滚；prepared进程死亡恢复旧值，committed之后恢复applied。回滚自身再次失败保留prepared，后续可重入。恢复前检查全部目标、备份和候选摘要；第三种内容/损坏备份 `RECOVERY_CONFLICT`，阻止全部新apply，不覆盖外部改动。
 - 全库锁→job锁，候选/diff/审核快照与写入互斥。GET/解析不悄悄修复正式库，未完成事务时 `TRANSACTION_PENDING`；显式apply或worker/API启动先恢复历史事务。BUSY为409，稍后重试。
@@ -159,4 +159,4 @@ fixture只检查PDF标记并输出原创固定MD，**不识别PDF，不代表OCR
 
 [部署说明](../deploy/README.md)提供静态发布自动回滚、独立API/worker单位与生产验收命令。
 运维默认 `ssh -N -L 18765:127.0.0.1:8765 qqvps-cd`，访问 `http://127.0.0.1:18765/import-login/`；该端口与站点SW origin隔离。
-apply只改 `/srv/cn-math-taxonomy/import-workspace/data`。上线数据须显式将审阅后的正式JSON交付Git分支、跑原validate/回归、提交并发布新release；不得复制imports/source/token到Git或静态release。
+apply只改 `/srv/cn-math-taxonomy/import-workspace/data`。上线数据须先暂停工作区写入（停止API/worker或持全库锁）并确认事务已恢复，再将审阅后的正式JSON交付Git分支、跑原validate/回归、提交并发布新release；不得复制imports/source/token到Git或静态release。

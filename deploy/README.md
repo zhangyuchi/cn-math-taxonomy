@@ -48,7 +48,7 @@ worker默认关闭重OCR，重解析/OCR在开发机；插件与协议见[模块
 
 ## 数据交付与恢复
 
-apply不修改release、不自动更新current。需要上线工作区数据时：从workspace仅导出经审阅的正式JSON到交付分支 → 原validate/JS回归 → 审阅并提交 → 显式发布该SHA。绝不导出 `data/imports/`、原文、审批缓存或token。
+apply不修改release、不自动更新current。需要上线工作区数据时：先暂停workspace写入（停止API/worker或持全库锁）、完成待恢复事务，再仅导出经审阅的正式JSON到交付分支 → 原validate/JS回归 → 审阅并提交 → 显式发布该SHA。绝不导出 `data/imports/`、原文、审批缓存或token。
 workspace位于current/releases之外，不能通过Python静态服务器或nginx alias提供。历史build与导入不能同时改工作区；事务恢复方法见模块README。
 
 发布故障查看 `publish-intent.json` 与 `journalctl -u cn-math.service`；回滚失败保留switching意图并返回失败，不继续发布。恢复时先排除磁盘/systemd问题，再重跑发布器，由其恢复旧状态后重新发布。导入故障查看 `journalctl -u import-api -u import-worker` 及私有job/reports。

@@ -5,12 +5,12 @@ from .store import (DRAFT_NAMES, ImportErrorResponse, atomic_json, digest_bytes,
                     file_lock, json_bytes, now, read_json, sync_directory)
 
 
-def check_shape(draft):
-    """只接受五份约定JSON及对象条目；schema错误留给完整候选报告。"""
+def check_shape(draft, *, limit_size=True):
+    """检查五份JSON形状；大小限制仅用于入站修订，不拒绝已生成的大备份。"""
     if (not isinstance(draft, dict) or set(draft) != set(DRAFT_NAMES) or
             not isinstance(draft['mappings'], dict) or
             any(not isinstance(draft[n], list) or any(not isinstance(row, dict) for row in draft[n])
-                for n in DRAFT_NAMES if n != 'mappings') or len(json_bytes(draft)) > 1024*1024):
+                for n in DRAFT_NAMES if n != 'mappings') or (limit_size and len(json_bytes(draft)) > 1024*1024)):
         raise ImportErrorResponse('INVALID_DRAFT', '修订须为约定五份JSON，数组内为对象，总计≤1MiB')
 
 
@@ -27,9 +27,11 @@ def recover_locked(service, job_id):
         return
     intent = read_json(path)
     for key in ('before', 'after'):
-        check_shape(intent[key])
+        # before来自已接受的worker产物，可超过入站修订上限；结构/摘要仍逐项核验。
+        check_shape(intent[key], limit_size=key == 'after')
         if digest_bytes(json_bytes(intent[key])) != intent[key+'Sha256']:
             raise ImportErrorResponse('RECOVERY_CONFLICT', '草稿修订备份损坏', 409)
+    service.cleanup_draft_temps(job_id)
     current = service._draft_files(job_id)
     if any(current[n] != intent['before'][n] and current[n] != intent['after'][n] for n in DRAFT_NAMES):
         raise ImportErrorResponse('RECOVERY_CONFLICT', '草稿存在第三种内容，停止恢复', 409)

@@ -81,8 +81,8 @@ raise SystemExit(1)
         subprocess.run(['git', '-C', str(self.git), '-c', 'user.name=Test', '-c', 'user.email=test@example.invalid',
                         'commit', '-qm', message], check=True)
 
-    def publish(self, **env):
-        return subprocess.run(['bash', str(REPO/'deploy/publish-to-qqvps.sh'), 'HEAD'],
+    def publish(self, ref='HEAD', **env):
+        return subprocess.run(['bash', str(REPO/'deploy/publish-to-qqvps.sh'), ref],
                               env={**self.env, **env}, capture_output=True, text=True, timeout=30)
 
     def test_preflight_failure_preserves_current_and_unit(self):
@@ -127,6 +127,36 @@ raise SystemExit(1)
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual((self.deploy_root/'current').resolve(), previous)
         self.assertEqual((self.units/'cn-math.service.d/zz-release.conf').read_bytes(), old_override)
+
+    def _interrupted_first_migration(self):
+        result = self.publish()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        path = self.deploy_root/'publish-intent.json'
+        intent = json.loads(path.read_text())
+        intent['state'] = 'switching'
+        path.write_text(json.dumps(intent))
+        current = self.deploy_root/'current'
+        current.unlink()
+        current.symlink_to(self.deploy_root/'releases/missing-interrupted-release')
+        subprocess.run([self.env['SYSTEMCTL'], 'restart', 'cn-math.service'], env=self.env, check=True)
+
+    def _assert_interrupted_migration_restored(self, result):
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse((self.deploy_root/'current').is_symlink())
+        self.assertFalse((self.units/'cn-math.service.d/zz-release.conf').exists())
+        intent = json.loads((self.deploy_root/'publish-intent.json').read_text())
+        self.assertEqual(intent['state'], 'rolled_back')
+        self.assertTrue(intent['rollbackHealthy'])
+        self.assertIn('ROLLBACK', result.stdout)
+
+    def test_pending_recovery_runs_before_failing_network_fetch(self):
+        self._interrupted_first_migration()
+        subprocess.run(['git', '-C', str(self.git), 'remote', 'add', 'origin', str(self.root/'unavailable')], check=True)
+        self._assert_interrupted_migration_restored(self.publish(PUBLISH_FETCH='1'))
+
+    def test_pending_recovery_runs_before_invalid_ref_resolution(self):
+        self._interrupted_first_migration()
+        self._assert_interrupted_migration_restored(self.publish(ref='missing-ref'))
 
 
 if __name__ == '__main__':

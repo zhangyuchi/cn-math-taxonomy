@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import re
+import stat
 import tempfile
 import uuid
 
@@ -222,6 +223,30 @@ class Service:
         if not target.is_file():
             raise ImportErrorResponse('NOT_FOUND', '文件不存在', 404)
         return target.read_bytes()
+
+    def cleanup_draft_temps(self, job_id):
+        """显式恢复/重解析在全库→job锁内清理本模块孤儿临时文件。
+
+        只认atomic_bytes的精确文件名前缀、8字符随机后缀及普通文件；先检查
+        全部目录项，再清理。未知文件、目录或符号链接仍失败关闭，GET不调用。
+        """
+        directory = self.job_dir(job_id) / 'draft'
+        if directory.is_symlink() or not directory.resolve().is_relative_to(self.job_dir(job_id)):
+            raise ImportErrorResponse('INVALID_PATH', '草稿目录不允许符号链接', 400)
+        expected = {name+'.json' for name in DRAFT_NAMES}
+        pattern = r'\.(?:' + '|'.join(DRAFT_NAMES) + r')\.json-[a-z0-9_]{8}'
+        owned = []
+        for path in directory.iterdir():
+            if path.name not in expected and not re.fullmatch(pattern, path.name):
+                raise ImportErrorResponse('INVALID_DRAFT', '草稿含未知文件，停止恢复')
+            if not stat.S_ISREG(path.lstat().st_mode):
+                raise ImportErrorResponse('INVALID_PATH', '草稿和孤儿临时文件必须为普通文件', 400)
+            if path.name not in expected:
+                owned.append(path)
+        for path in owned:
+            path.unlink()
+        if owned:
+            sync_directory(directory)
 
     def _draft_files(self, job_id):
         """读取所有约定草稿文件；缺失或未知 JSON 文件不能被静默忽略。"""

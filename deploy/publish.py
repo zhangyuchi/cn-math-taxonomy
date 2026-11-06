@@ -112,13 +112,14 @@ class Publisher:
 
     def publish(self, ref):
         """创建干净archive并先验证；切流后任意失败返回非零且自动回滚。"""
-        if os.environ.get('PUBLISH_FETCH', '1') != '0':
-            subprocess.run(['git', '-C', str(self.mirror), 'fetch', '--all', '--tags', '--prune'], check=True, timeout=120)
-        sha = subprocess.check_output(['git', '-C', str(self.mirror), 'rev-parse', '--verify', ref+'^{commit}'], text=True).strip()
+        # 恢复只依赖本机已持久状态，不能被新ref或网络故障阻断。
         if self.intent_path.exists():
             pending = json.loads(self.intent_path.read_text())
             if pending.get('state') == 'switching':
                 self.rollback(pending)
+        if os.environ.get('PUBLISH_FETCH', '1') != '0':
+            subprocess.run(['git', '-C', str(self.mirror), 'fetch', '--all', '--tags', '--prune'], check=True, timeout=120)
+        sha = subprocess.check_output(['git', '-C', str(self.mirror), 'rev-parse', '--verify', ref+'^{commit}'], text=True).strip()
         if self.current.exists() and not self.current.is_symlink():
             raise RuntimeError('current必须为symlink，拒绝覆盖目录')
         stamp = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')

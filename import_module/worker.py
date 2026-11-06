@@ -77,6 +77,7 @@ def _process(service, job_id):
         service.save(meta)
         directory = service.job_dir(job_id)
         try:
+            service.cleanup_draft_temps(job_id)
             content = service.source(job_id)
             pdf = meta['sourceFiles'][0].endswith('.pdf')
             if pdf:
