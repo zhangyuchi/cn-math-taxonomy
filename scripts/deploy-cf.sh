@@ -28,7 +28,9 @@ cp -a "$ROOT/explore" "$DIST/"
 cp -a "$ROOT/diagnose" "$DIST/"
 cp -a "$ROOT/children" "$DIST/"
 cp -a "$ROOT/goods" "$DIST/"
-cp -a "$ROOT/wrongbook" "$DIST/"
+# wrongbook/ 同时含前端页面与服务端 Python；Pages 只发布页面，私有代码不进公开静态根。
+mkdir -p "$DIST/wrongbook"
+cp "$ROOT/wrongbook/index.html" "$ROOT/wrongbook/wrongbook.css" "$ROOT/wrongbook/wrongbook.js" "$DIST/wrongbook/"
 rm -f "$DIST/diagnose/README.md"
 cp "$ROOT/data/topics.json" \
    "$ROOT/data/dependencies.json" \

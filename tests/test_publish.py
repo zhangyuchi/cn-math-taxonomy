@@ -23,7 +23,7 @@ class PublishAcceptance(unittest.TestCase):
         self.git.mkdir()
         subprocess.run(['git', 'init', '-q', str(self.git)], check=True)
         for name in ('index.html', 'explore/index.html', 'diagnose/index.html', 'children/index.html',
-                     'assets/site.css', 'assets/home.js', 'diagnose/engine.js', 'sw.js'):
+                     'goods/index.html', 'assets/site.css', 'assets/home.js', 'diagnose/engine.js', 'sw.js'):
             path = self.git / name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text('<!doctype html>原创发布测试' if name.endswith('.html') else '/* test */')
@@ -33,6 +33,8 @@ class PublishAcceptance(unittest.TestCase):
         backend = self.git / 'wrongbook/store.py'
         backend.parent.mkdir()
         backend.write_text('# private backend fixture')
+        for name in ('index.html', 'wrongbook.css', 'wrongbook.js'):
+            (self.git / 'wrongbook' / name).write_text('<!doctype html>错题本页面' if name.endswith('.html') else '/* page */')
         self.commit('first')
         self.deploy_root = self.root / 'srv'
         self.deploy_root.mkdir()
@@ -122,7 +124,10 @@ raise SystemExit(1)
         self.assertNotEqual(previous, self.git)
         self.assertEqual((previous/'index.html').read_bytes(), (self.git/'index.html').read_bytes())
         self.assertFalse((previous/'data/imports').exists())
-        self.assertFalse((previous/'wrongbook').exists())
+        self.assertFalse((previous/'wrongbook/store.py').exists())
+        self.assertTrue((previous/'wrongbook/index.html').exists())
+        self.assertTrue((previous/'wrongbook/wrongbook.js').exists())
+        self.assertTrue((previous/'wrongbook/wrongbook.css').exists())
         old_override = (self.units/'cn-math.service.d/zz-release.conf').read_bytes()
         (self.git/'index.html').write_text('<!doctype html>second release')
         self.commit('second page')

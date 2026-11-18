@@ -26,6 +26,10 @@ const REQUIRED = [
   './explore',
   './diagnose',
   './children',
+  './goods',
+  './wrongbook/index.html',
+  './wrongbook/wrongbook.js',
+  './wrongbook/wrongbook.css',
   './data/topics.json',
   './data/dependencies.json',
   './data/cn-curriculum-standards.json',
@@ -299,6 +303,8 @@ test('只打包白名单，不把研究目录拷进上传目录', () => {
       assert.ok(set.has(rel), '缺少 ' + rel);
     }
     assert.ok(!set.has('./diagnose/README.md'));
+    const leaked = run.tree.filter((p) => /^\.\/wrongbook\/.*\.py$/.test(p));
+    assert.deepEqual(leaked, [], 'wrongbook服务端代码不应上传到Pages');
     for (const name of FORBIDDEN) {
       const hit = run.tree.some((p) => p === './' + name || p.startsWith('./' + name + '/'));
       assert.ok(!hit, '不应上传 ' + name);

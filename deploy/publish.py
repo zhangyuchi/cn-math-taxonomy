@@ -43,6 +43,29 @@ def sync_dir(path):
         os.close(descriptor)
 
 
+WRONGBOOK_PRIVATE = ('__init__.py', 'api.py', 'cli.py', 'common.py', 'paper.py', 'store.py', 'README.md')
+
+
+def prune_wrongbook(release):
+    """wrongbook/同时放前端页面与服务端代码：只发布页面，私有服务不进公开静态根。"""
+    directory = release/'wrongbook'
+    if not directory.is_dir():
+        return
+    for name in WRONGBOOK_PRIVATE:
+        path = directory/name
+        if path.is_file() or path.is_symlink():
+            path.unlink()
+    for path in directory.rglob('__pycache__'):
+        shutil.rmtree(path)
+    for path in directory.rglob('*.sqlite3'):
+        path.unlink()
+    leaked = sorted(str(p.relative_to(release)) for p in directory.rglob('*.py'))
+    if leaked:
+        raise RuntimeError('wrongbook发布目录不允许Python源码：'+', '.join(leaked))
+    if not any(directory.iterdir()):
+        directory.rmdir()
+
+
 def switch_link(link, target):
     """同目录原子切换current；不在release中写运行状态。"""
     temporary = link.with_name('.current-'+uuid.uuid4().hex)
@@ -131,24 +154,25 @@ class Publisher:
             with tarfile.open(fileobj=archive) as source:
                 source.extractall(release, filter='data')
         for relative in ('data/imports', '.codex-run', '.github', 'review-ui', 'import_module', 'import-module',
-                         'import-api', 'import-worker', 'import-cli', 'wrongbook'):
+                         'import-api', 'import-worker', 'import-cli'):
             path = release/relative
             if path.is_dir(): shutil.rmtree(path)
             elif path.exists() or path.is_symlink(): path.unlink()
-        expected_files(release)
+        prune_wrongbook(release)
+        expected_files(release, strict=True)
         handler = functools.partial(QuietHandler, directory=str(release))
         server = ThreadingHTTPServer(('127.0.0.1', 0), handler)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         try:
-            health_check(release, 'http://127.0.0.1:'+str(server.server_port), self.timeout)
+            health_check(release, 'http://127.0.0.1:'+str(server.server_port), self.timeout, strict=True)
         finally:
             server.shutdown(); server.server_close(); thread.join()
         previous = os.readlink(self.current) if self.current.is_symlink() else None
         rollback_root = self.current.resolve() if previous is not None else Path(os.environ.get('LEGACY_ROOT', '/home/ubuntu/Projects/cn-math-taxonomy'))
         active = self.control('is-active', '--quiet', 'cn-math.service', check=False).returncode == 0
         if active:
-            # 首次迁移前也要求旧站健康，确保回滚目标实际存在。
+            # 首次迁移前也要求旧站健康，确保回滚目标实际存在。旧站可能还没有本轮新增页面，按基线检查。
             health_check(rollback_root, self.url, self.timeout)
         old_dropin = self.dropin.read_bytes() if self.dropin.exists() else None
         intent = dict(state='switching', sha=sha, release=str(release), previousCurrent=previous,

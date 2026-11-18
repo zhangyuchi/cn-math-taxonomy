@@ -21,6 +21,14 @@ REPO_MIRROR=/srv/cn-math-taxonomy/repository.git ./deploy/publish-to-qqvps.sh <�
 可配置环境：`ROOT`、`REPO_MIRROR`、`LEGACY_ROOT`、`STATIC_PORT`（默认8000）、`HEALTH_TIMEOUT`（默认20秒，上限60）。`SYSTEMCTL`、`SYSTEMD_DIR`、`PUBLISH_PRIVILEGE_PREFIX`仅供本地测试替身；生产使用默认sudo/systemctl。`PUBLISH_FETCH=0`可用于本地测试，或已通过bundle核验且远端SHA一致的离线发布。不要把token放参数。
 `PUBLISH_GATE_CHECK`可设为JSON argv，发布器追加新release路径执行真实gate路径检查；失败同样触发回滚。
 
+`wrongbook/` 同时存放本站可见的前端错题本页（`index.html`、`wrongbook.css`、`wrongbook.js`）与服务端持久错题本 Python 代码。静态 release 只保留前端三件套：`publish.py` 的 `prune_wrongbook()` 删除服务端源码、`__pycache__` 与 `*.sqlite3`，若仍残留 `*.py` 即报错回滚；`scripts/deploy-cf.sh` 也只逐个复制前端文件。健康检查包含 `goods/index.html` 与 `wrongbook/index.html`，页面丢失不会被当成发布成功。服务端代码仍按下一节用独立 `wrongbook-current` 安装。
+
+导航含 `/kp/` 知识点索引，该目录由 `scripts/gen-kp-pages.mjs` 在部署时生成、不入库，本仓库只给 Cloudflare 的 `scripts/deploy-cf.sh` 接过这一步。qqvps 发布走 `git archive`，不会生成它；在补上前缀适配（生成器把站内链接写死成域名根 `/assets/...`，而本站在 `/k12-knowledge-graph/` 下）之前，qqvps 上该入口会 404，见下方「已知缺口」。
+
+## 已知缺口
+
+- 知识点静态页 `/kp/`：`scripts/gen-kp-pages.mjs` 把 canonical、sitemap、robots 和站内资源链接都写成 `https://math.pansgo.com/...` 与根路径 `/assets/...`，适配的是挂在域名根的 Cloudflare Pages。qqvps 站点在 `/k12-knowledge-graph/` 前缀下，直接生成会得到错误前缀。本轮只做合并与核对，未在 VPS 上引入 node 构建步骤，因此 qqvps 发布后首页「知识点索引」入口会 404；Cloudflare 部署不受影响。补齐方式：给生成器增加 `--base`/origin 参数（或发布后在 release 内改写前缀），再在 `publish.py` 预检阶段调用。
+
 本仓库 `deploy/check-gate.py`在受信任VPS内读取现有签名机制，只在进程内产生cookie，不读取/记录明文密码，不输出cookie/key。用本机自签名TLS检查真实nginx路径及其他站点正文：
 
 ```bash
