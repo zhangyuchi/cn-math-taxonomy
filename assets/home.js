@@ -89,9 +89,9 @@
       sdemo.textContent = '先看一遍演示：一年级上册科学';
     }
   } else if (subject === 'morality') {
-    document.title = '小学道德与法治 · 中小学·高中知识图谱';
+    document.title = '道德与法治 · 中小学·高中知识图谱';
     var meye = document.querySelector('.eyebrow');
-    if (meye) meye.textContent = '道德与法治：小学一至六年级 · 统编版';
+    if (meye) meye.textContent = '道德与法治：小学与初中 · 统编版 · 只列出已录入册次';
     var mprimary = document.querySelector('.hero-actions a.btn-primary');
     var mbrowse = document.querySelector('.hero-actions a.btn:not(.btn-primary)');
     if (mprimary) mprimary.setAttribute('href', 'diagnose/?subject=morality');
@@ -143,7 +143,7 @@
   } else if (subject === 'chemistry') {
     document.title = '化学 · 中小学·高中知识图谱';
     var ceye = document.querySelector('.eyebrow');
-    if (ceye) ceye.textContent = '化学：初中九年级 · 人教版';
+    if (ceye) ceye.textContent = '化学：初中九年级 · 高中必修第一、二册和选择性必修第一、二、三册 · 人教版';
     var cprimary = document.querySelector('.hero-actions a.btn-primary');
     var cbrowse = document.querySelector('.hero-actions a.btn:not(.btn-primary)');
     if (cprimary) cprimary.setAttribute('href', 'diagnose/?subject=chemistry');
@@ -153,6 +153,30 @@
       cdemo.setAttribute('href', 'diagnose/?subject=chemistry&grade=' + encodeURIComponent('九上') + '&demo=1');
       cdemo.textContent = '先看一遍演示：九年级上册化学';
     }
+  }
+
+  function moralityJuniorEyebrow(topicList) {
+    var vols = [
+      [7, '上', '七上'], [7, '下', '七下'],
+      [8, '上', '八上'], [8, '下', '八下'],
+      [9, '上', '九上'], [9, '下', '九下']
+    ];
+    var has = {};
+    (topicList || []).forEach(function (topic) {
+      if (topic.grade >= 7 && topic.grade <= 9 && (topic.semester === '上' || topic.semester === '下')) {
+        has[String(topic.grade) + topic.semester] = true;
+      }
+    });
+    var present = [];
+    vols.forEach(function (row) {
+      if (has[String(row[0]) + row[1]]) present.push(row[2]);
+    });
+    var junior = present.length ? ('初中现含' + present.join('、')) : '初中册次尚未录入';
+    var g9note = '九年级未录入';
+    if (has['9上'] && has['9下']) g9note = '九年级上下册均已录入';
+    else if (has['9上']) g9note = '九下未录入';
+    else if (has['9下']) g9note = '九上未录入';
+    return '道德与法治：小学与初中 · 统编版 · 只列出已录入册次（' + junior + '；' + g9note + '）';
   }
 
   function setText(id, value) {
@@ -194,8 +218,8 @@
       li.appendChild(name);
       var meta = document.createElement('span');
       meta.className = 'blind-home-meta';
-      var bits = [row.status === 'weak' ? (row.root ? '根因' : '薄弱') : '不稳'];
-      if (row.wrongs) bits.push('答错 ' + row.wrongs + ' 次');
+      var bits = [row.status === 'weak' ? (row.root ? '根因' : '薄弱') : (row.status === 'retest' ? '需重测' : '不稳')];
+      if (row.wrongs && row.status !== 'retest') bits.push('答错 ' + row.wrongs + ' 次');
       meta.textContent = bits.join(' · ');
       li.appendChild(meta);
       list.appendChild(li);
@@ -217,10 +241,40 @@
     }
   }
 
+
+  /* 同 URL 最多 2 次尝试；进行中的 Promise 去重。 */
+  var fetchInflight = {};
+  function fetchJsonWithRetry(url, attempts) {
+    attempts = attempts || 2;
+    if (fetchInflight[url]) return fetchInflight[url];
+    var run = (function tryOnce(left) {
+      return fetch(url).then(function (response) {
+        if (!response.ok) {
+          var httpErr = new Error('HTTP ' + response.status);
+          httpErr.noRetry = true;
+          throw httpErr;
+        }
+        return response.json();
+      }).catch(function (err) {
+        if (err && err.noRetry) throw err;
+        if (left > 1) return tryOnce(left - 1);
+        throw err;
+      });
+    })(attempts);
+    fetchInflight[url] = run.then(function (data) {
+      delete fetchInflight[url];
+      return data;
+    }, function (err) {
+      delete fetchInflight[url];
+      throw err;
+    });
+    return fetchInflight[url];
+  }
+
+  var homeLoadToken = subject;
   Promise.all([
     fetch('data/topics.json'),
     fetch('data/dependencies.json'),
-    fetch('data/questions.json'),
     fetch('data/cn-curriculum-standards.json')
   ]).then(function (responses) {
     responses.forEach(function (response, index) {
@@ -228,12 +282,12 @@
     });
     return Promise.all(responses.map(function (response) { return response.json(); }));
   }).then(function (data) {
+    if (homeLoadToken !== subject) return;
     var allTopics = data[0];
     var topics = data[0];
     var deps = data[1];
-    var questions = data[2];
-    var standards = data[3];
-    if (!Array.isArray(topics) || !Array.isArray(deps) || !Array.isArray(questions)) {
+    var standards = data[2];
+    if (!Array.isArray(topics) || !Array.isArray(deps)) {
       throw new Error('数据格式无法识别');
     }
     var items = standards && Array.isArray(standards.items) ? standards.items : [];
@@ -265,19 +319,34 @@
     }
     var wantEnglish = subject === 'english';
     var wantPhysics = subject === 'physics';
-    var wantPrimary = subject === 'science' || subject === 'morality';
+    var wantPrimary = subject === 'science';
     var wantHistory = subject === 'history';
     var wantGeography = subject === 'geography';
     var wantBiology = subject === 'biology';
     var wantChemistry = subject === 'chemistry';
     topics = topics.filter(function (topic) { return (topic.subject || subjectOfId(topic.id)) === subject; });
     deps = deps.filter(function (edge) { return subjectOfId(edge.topicId) === subject; });
-    questions = questions.filter(function (question) { return subjectOfId(question.topicId) === subject; });
     items = items.filter(function (item) { return subjectOfStd(item.id) === subject; });
+    if (subject === 'morality') {
+      var loadedEye = document.querySelector('.eyebrow');
+      if (loadedEye) loadedEye.textContent = moralityJuniorEyebrow(topics);
+    }
     setText('n-topics', String(topics.length));
     setText('n-edges', String(deps.length));
-    setText('n-questions', String(questions.length));
+    setText('n-questions', '…');
     setText('n-standards', String(items.length));
+
+    /* 题库较大，单独加载，不挡统计和年级入口；失败只把题目数显示成 — */
+    var qToken = homeLoadToken;
+    fetchJsonWithRetry('data/questions.json', 2).then(function (questions) {
+      if (qToken !== subject) return;
+      if (!Array.isArray(questions)) throw new Error('数据格式无法识别');
+      var count = questions.filter(function (question) { return subjectOfId(question.topicId) === subject; }).length;
+      setText('n-questions', String(count));
+    }).catch(function () {
+      if (qToken !== subject) return;
+      setText('n-questions', '—');
+    });
 
     var grades = document.getElementById('grades');
     if (!grades) return;
@@ -309,12 +378,19 @@
       var up = list.filter(function (topic) { return topic.semester === '上'; }).length;
       var down = list.filter(function (topic) { return topic.semester === '下'; }).length;
       var whole = list.filter(function (topic) { return topic.semester === '全'; }).length;
+      if (subject === 'morality' && !list.length) continue;
       var splitText = whole ? '全一册 ' + whole : '上 ' + up + ' · 下 ' + down;
+      if (subject === 'morality' && !whole) {
+        var morParts = [];
+        if (up) morParts.push('上 ' + up);
+        if (down) morParts.push('下 ' + down);
+        splitText = morParts.join(' · ');
+      }
       var href = subject !== 'math' ? 'explore/?subject=' + subject + '&grade=' + g : 'explore/?grade=' + g;
       addCard(g, g <= 6 ? '小学' : (wantPhysics ? '初中物理' : '初中'), CN[g] + '年级', g <= 6 ? 'is-primary' : 'is-junior', splitText, href);
     }
-    if (wantPrimary || subject === 'chinese') {
-      /* 语文到九年级（上下册），科学和道德与法治到六年级；都不加高中卡片 */
+    if (wantPrimary || subject === 'chinese' || subject === 'morality') {
+      /* 语文、道德与法治到九年级且无高中；科学只到六年级。道德与法治空年级不画卡片 */
     } else if (wantHistory) {
       /* 初中历史只到九年级 */
     } else if (wantGeography) {
@@ -322,7 +398,16 @@
     } else if (wantBiology) {
       /* 初中生物只到八年级，九年级没有生物课 */
     } else if (wantChemistry) {
-      /* 初中化学只开九年级，没有小学、七八年级和高中卡片 */
+      var chemHsB1 = topics.filter(function (topic) { return topic.grade === 10; });
+      var chemHsB2 = topics.filter(function (topic) { return topic.grade === 11; });
+      if (chemHsB1.length) addCard(10, '高中化学', '必修一', 'is-senior', '必修第一册', 'explore/?subject=chemistry&grade=10');
+      if (chemHsB2.length) addCard(11, '高中化学', '必修二', 'is-senior', '必修第二册', 'explore/?subject=chemistry&grade=11');
+      var chemHsS1 = topics.filter(function (topic) { return topic.grade === 12; });
+      if (chemHsS1.length) addCard(12, '高中化学', '选必一', 'is-senior', '选择性必修第一册', 'explore/?subject=chemistry&grade=12');
+      var chemHsS2 = topics.filter(function (topic) { return topic.grade === 13; });
+      if (chemHsS2.length) addCard(13, '高中化学', '选必二', 'is-senior', '选择性必修第二册', 'explore/?subject=chemistry&grade=13');
+      var chemHsS3 = topics.filter(function (topic) { return topic.grade === 14; });
+      if (chemHsS3.length) addCard(14, '高中化学', '选必三', 'is-senior', '选择性必修第三册', 'explore/?subject=chemistry&grade=14');
     } else if (wantPhysics) {
       addCard(10, '高中物理', '必修一', 'is-senior', '必修第一册', 'explore/?subject=physics&grade=10');
       addCard(11, '高中物理', '必修二', 'is-senior', '必修第二册', 'explore/?subject=physics&grade=11');

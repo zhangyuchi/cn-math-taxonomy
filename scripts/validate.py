@@ -30,7 +30,10 @@ MATH_DOMAINS = {"数与代数", "图形与几何", "统计与概率", "综合与
 EN_DOMAINS = {"语音", "词汇", "语法", "日常表达", "读写"}
 ZH_DOMAINS = {"拼音", "识字写字", "词语", "句子", "阅读理解", "古诗文积累", "文言文阅读", "名著阅读", "习作基础"}
 SCI_DOMAINS = {"物质科学", "生命科学", "地球与宇宙科学", "技术与工程"}
-MOR_DOMAINS = {"生活与安全", "学校生活", "家庭与亲情", "社会规则", "公民与国家", "自然与环境"}
+MOR_DOMAINS = {
+    "生活与安全", "学校生活", "家庭与亲情", "社会规则", "公民与国家", "自然与环境",
+    "生命安全与健康教育", "法治教育", "中华优秀传统文化教育", "革命传统教育", "国情教育",
+}
 HIS_DOMAINS = {"中国古代史", "中国近代史", "中国现代史", "世界古代史", "世界近代史", "世界现代史"}
 GEO_DOMAINS = {"地球与地图", "世界地理", "中国地理"}
 BIO_DOMAINS = {
@@ -72,8 +75,15 @@ ZH_STD_CODES = {
 }
 SCI_STD_CODES = {"WZ": "物质科学", "SM": "生命科学", "DQ": "地球与宇宙科学", "JG": "技术与工程"}
 SCI_STD_ID_RE = re.compile(r"^css-2022:([123])\.(WZ|SM|DQ|JG)\.(\d{2,})$")
-MOR_STD_CODES = {"LS": "生活与安全", "XX": "学校生活", "JT": "家庭与亲情", "SH": "社会规则", "GM": "公民与国家", "ZR": "自然与环境"}
-MOR_STD_ID_RE = re.compile(r"^cds-2022:([123])\.(LS|XX|JT|SH|GM|ZR)\.(\d{2,})$")
+MOR_STD_CODES = {
+    "LS": "生活与安全", "XX": "学校生活", "JT": "家庭与亲情", "SH": "社会规则", "GM": "公民与国家", "ZR": "自然与环境",
+    "JK": "生命安全与健康教育", "FZ": "法治教育", "WH": "中华优秀传统文化教育", "GY": "革命传统教育", "GQ": "国情教育",
+}
+MOR_PRIMARY_CODES = ("LS", "XX", "JT", "SH", "GM", "ZR")
+MOR_JUNIOR_CODES = ("JK", "FZ", "WH", "GY", "GQ")
+MOR_STD_ID_RE = re.compile(
+    r"^cds-2022:(?:([123])\.(LS|XX|JT|SH|GM|ZR)|(4)\.(JK|FZ|WH|GY|GQ))\.(\d{2,})$"
+)
 HIS_STD_CODES = {
     "CA": "中国古代史", "CN": "中国近代史", "CM": "中国现代史",
     "WA": "世界古代史", "WN": "世界近代史", "WM": "世界现代史",
@@ -92,6 +102,28 @@ CHEM_STD_CODES = {
     "SR": "物质的化学变化", "SS": "化学与社会·跨学科实践",
 }
 CHEM_STD_ID_RE = re.compile(r"^cks-2022:(SQ|SP|SC|SR|SS)\.(\d{2,})$")
+# 高中化学必修第一、二册和选择性必修第一、二、三册。主题代码与 scripts/chem_hs_std.py 的 CODES 一致。
+CHEM_HS_STD_CODES = {
+    "EX": "化学科学与实验探究",
+    "IN": "常见的无机物及其应用",
+    "ST": "物质结构基础与化学反应规律",
+    "OR": "简单的有机化合物及其应用",
+    "SO": "化学与社会发展",
+    "TH": "化学反应与热能",
+    "DR": "化学反应的方向、速率和限度",
+    "AQ": "水溶液中的离子反应与平衡",
+    "EL": "化学反应与电能",
+    "AT": "原子结构与性质",
+    "MO": "分子结构与性质",
+    "CR": "聚集状态与晶体结构",
+    "OS": "有机化合物的组成与结构",
+    "HY": "烃及其衍生物的性质与应用",
+    "BM": "生物大分子",
+    "PM": "合成高分子",
+}
+CHEM_HS_STD_ID_RE = re.compile(
+    r"^cks-hs-2017:(B[12]|S[123])\.(EX|IN|ST|OR|SO|TH|DR|AQ|EL|AT|MO|CR|OS|HY|BM|PM)\.(\d{2,})$"
+)
 ZH_STD_ID_RE = re.compile(r"^ccs-2022:([1234])\.(PY|SZ|CY|JZ|YD|GS|XZ|WY|MZ)\.(\d{2,})$")
 EN_PROMPT_START_RE = re.compile(r"^(同一|上题|该题|同上)")
 EN_PROMPT_BAN_RE = re.compile(r"本知识点|课标|是否要求")
@@ -99,8 +131,8 @@ CORE_FIELDS = ["id", "name", "domain", "grade", "semester", "chapter", "type",
                "description", "mastery_criteria", "diagnostic_question", "external"]
 EXT_FIELDS = ["id", "name", "domain", "grade", "description", "external"]
 # cnm_001 初中正式；cnm_p001 小学正式；cnm_h001 高中正式。cne_p001 小学英语，cne_j001 初中英语，cne_h001 高中英语。
-# cnp_001 初中物理；cnp_h001 高中物理（必修一至选必三，grade 10–15）。cnc_p001 小学语文，cnc_j001 初中语文；cns_p001 小学科学；cnd_p001 小学道德与法治；cnh_j001 初中历史；cng_j001 初中地理；cnb_j001 初中生物；cnk_j001 初中化学。
-ID_RE = re.compile(r"^(?:cnm_(?:p|h)?|cne_[pjh]|cnp_h?|cnc_[pj]|cns_p|cnd_p|cnh_j|cng_j|cnb_j|cnk_j)\d{3,}$")
+# cnp_001 初中物理；cnp_h001 高中物理（必修一至选必三，grade 10–15）。cnc_p001 小学语文，cnc_j001 初中语文；cns_p001 小学科学；cnd_p001 小学道德与法治，cnd_j001 初中道德与法治；cnh_j001 初中历史；cng_j001 初中地理；cnb_j001 初中生物；cnk_j001 初中化学；cnk_h001 高中化学（grade 10 必修一、11 必修二、12 选必一、13 选必二、14 选必三）。
+ID_RE = re.compile(r"^(?:cnm_(?:p|h)?|cne_[pjh]|cnp_h?|cnc_[pj]|cns_p|cnd_[pj]|cnh_j|cng_j|cnb_j|cnk_[jh])\d{3,}$")
 # 10、11 是必修第一、二册；12、13、14 是选择性必修第一、二、三册，不是教学年份。
 GRADES = (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14)
 ALIASES_PATH = os.path.join(ROOT, "data", "id-aliases.json")
@@ -179,6 +211,10 @@ def is_biology_id(tid):
 
 def is_chemistry_id(tid):
     return str(tid).startswith("cnk_")
+
+
+def is_chemistry_senior_id(tid):
+    return str(tid).startswith("cnk_h")
 
 
 def topic_subject(tid):
@@ -461,16 +497,26 @@ def check_topics(topics):
             err("%s grade 必须是 1–14 的整数（10、11 为必修两册，12–14 为选择性必修三册）" % where)
         if subj == "science" and g not in (1, 2, 3, 4, 5, 6):
             err("%s 小学科学 grade 必须是 1–6" % where)
-        if subj == "morality" and g not in (1, 2, 3, 4, 5, 6):
-            err("%s 小学道德与法治 grade 必须是 1–6" % where)
+        if subj == "morality":
+            if str(tid).startswith("cnd_p") and g not in (1, 2, 3, 4, 5, 6):
+                err("%s 小学道德与法治 grade 必须是 1–6" % where)
+            elif str(tid).startswith("cnd_j") and g not in (7, 8, 9):
+                err("%s 初中道德与法治 grade 必须是 7–9" % where)
         if subj == "history" and g not in (7, 8, 9):
             err("%s 初中历史 grade 必须是 7–9" % where)
         if subj == "geography" and g not in (7, 8):
             err("%s 初中地理 grade 必须是 7 或 8" % where)
         if subj == "biology" and g not in (7, 8):
             err("%s 初中生物 grade 必须是 7 或 8" % where)
-        if subj == "chemistry" and g != 9:
-            err("%s 初中化学 grade 必须是 9" % where)
+        if subj == "chemistry":
+            if str(tid).startswith("cnk_j"):
+                if g != 9:
+                    err("%s 初中化学 grade 必须是 9" % where)
+            elif is_chemistry_senior_id(tid):
+                if g not in (10, 11, 12, 13, 14):
+                    err("%s 高中化学 grade 必须是 10–14（10、11 是必修第一、二册；12、13、14 是选择性必修第一、二、三册）" % where)
+            else:
+                err("%s 化学 id 必须是 cnk_j 或 cnk_h" % where)
         if subj == "chinese":
             if str(tid).startswith("cnc_p") and g not in (1, 2, 3, 4, 5, 6):
                 err("%s 小学语文 grade 必须是 1–6" % where)
@@ -491,6 +537,8 @@ def check_topics(topics):
                 err("%s 九年级英语 semester 必须是 上（新版九上）或 全（旧版全一册，新版九下未出）" % where)
         elif sem not in ("上", "下"):
             err("%s semester 必须是 上/下" % where)
+        if subj == "chemistry" and is_chemistry_senior_id(tid) and sem != "上":
+            err("%s 高中化学 semester 必须是 上" % where)
         if t.get("type") not in TYPES:
             err("%s type 取值非法：%r" % (where, t.get("type")))
         mc = t.get("mastery_criteria")
@@ -642,8 +690,8 @@ def check_graph(ids, prereqs, dependents):
         has_dep = bool(dependents.get(tid))
         if not t.get("external") and not has_pre and not nonempty_str(t.get("root_reason")):
             err("%s(%s) 没有先修边，也没有 root_reason" % (tid, t.get("name")))
-        if not has_pre and not has_dep:
-            err("%s(%s) 完全孤立（既无先修也未被依赖）" % (tid, t.get("name")))
+        if not has_pre and not has_dep and not (str(tid).startswith("cnd_j") and nonempty_str(t.get("root_reason"))):
+            err("%s(%s) 完全孤立（既无先修也未被依赖，且没有 root_reason）" % (tid, t.get("name")))
 
 
 def report(ids, prereqs, dependents, n_hard, n_soft, n_en_hard, n_en_soft):
@@ -671,6 +719,8 @@ def report(ids, prereqs, dependents, n_hard, n_soft, n_en_hard, n_en_soft):
     def vol_label(t):
         if is_physics_senior_id(t.get("id")):
             return {10: "物必一", 11: "物必二", 12: "物必三", 13: "物选必一", 14: "物选必二", 15: "物选必三"}.get(t["grade"], str(t["grade"]))
+        if is_chemistry_senior_id(t.get("id")):
+            return {10: "必修一", 11: "必修二", 12: "选必一", 13: "选必二", 14: "选必三"}.get(t["grade"], str(t["grade"]))
         if is_english_id(t.get("id")) and isinstance(t.get("grade"), int) and t["grade"] >= 10:
             return {10: "必修一", 11: "必修二", 12: "必修三", 13: "选必一", 14: "选必二", 15: "选必三", 16: "选必四"}.get(t["grade"], str(t["grade"]))
         if t["grade"] == 10:
@@ -755,8 +805,9 @@ def report(ids, prereqs, dependents, n_hard, n_soft, n_en_hard, n_en_soft):
             print("  %-8s %d" % (k, v))
         print("化学按册：")
         cc = Counter(vol_label(t) for t in chem_core)
-        for k in ["九上", "九下"]:
-            print("  %-8s %d" % (k, cc.get(k, 0)))
+        for k in ["九上", "九下", "必修一", "必修二", "选必一", "选必二", "选必三"]:
+            if cc.get(k, 0) or k in ("九上", "九下", "必修一", "必修二", "选必一", "选必二", "选必三"):
+                print("  %-8s %d" % (k, cc.get(k, 0)))
         print("化学先修边 %d 条" % N_CHEM_EDGES)
     if en_core:
         print("\n英语按 domain：")
@@ -822,6 +873,7 @@ def check_standards_file(std):
     saw_geography = False
     saw_biology = False
     saw_chemistry = False
+    saw_chemistry_senior = False
     for i, it in enumerate(items):
         where = "standards.items[%d]" % i
         if not isinstance(it, dict):
@@ -846,6 +898,7 @@ def check_standards_file(std):
         geom = GEO_STD_ID_RE.match(sid)
         biom = BIO_STD_ID_RE.match(sid)
         chemm = CHEM_STD_ID_RE.match(sid)
+        chemmhs = CHEM_HS_STD_ID_RE.match(sid)
         pm = PHY_STD_ID_RE.match(sid)
         phm = PHY_HS_STD_ID_RE.match(sid)
         if phm:
@@ -898,6 +951,12 @@ def check_standards_file(std):
             last[key] = num
             if it.get("verbatim") is not False:
                 err("%s 高中条目必须显式标 verbatim:false（原文未逐页核对）" % where)
+            ref = it.get("page_or_ref")
+            if ref != "待核":
+                if not (isinstance(ref, str) and ref.startswith("人教社转载 PDF 印刷页") and "转述" in ref):
+                    err("%s 高中数学课标 page_or_ref 必须标明人教社转载 PDF 印刷页，并写明是转述" % where)
+                if "2026-11-06" not in str(it.get("text_status") or ""):
+                    err("%s 高中数学课标 text_status 必须记下 2026-11-06 的核对" % where)
         elif em:
             saw_english = True
             level, code, num = em.group(1), em.group(2), int(em.group(3))
@@ -911,8 +970,12 @@ def check_standards_file(std):
             last[key] = num
             if it.get("verbatim") is not False:
                 err("%s 英语课标必须显式标 verbatim:false（原文未逐页核对）" % where)
-            if it.get("page_or_ref") != "待核":
-                err("%s 英语课标 page_or_ref 必须是「待核」，不能编页码" % where)
+            ref = it.get("page_or_ref")
+            if ref != "待核":
+                if not (isinstance(ref, str) and ref.startswith("人教社电子书印刷页") and "转述" in ref):
+                    err("%s 英语课标 page_or_ref 必须标明人教社电子书印刷页，并写明是转述" % where)
+                if "2026-11-06" not in str(it.get("text_status") or ""):
+                    err("%s 英语课标 text_status 必须记下 2026-11-06 的核对" % where)
         elif ehm:
             saw_english = True
             band, code, num = ehm.group(1), ehm.group(2), int(ehm.group(3))
@@ -924,8 +987,12 @@ def check_standards_file(std):
             last[key] = num
             if it.get("verbatim") is not False:
                 err("%s 高中英语课标必须显式标 verbatim:false（原文未逐页核对）" % where)
-            if it.get("page_or_ref") != "待核":
-                err("%s 高中英语课标 page_or_ref 必须是「待核」，不能编页码" % where)
+            ref = it.get("page_or_ref")
+            if ref != "待核":
+                if not (isinstance(ref, str) and ref.startswith("人教社转载 PDF 印刷页") and "转述" in ref):
+                    err("%s 高中英语课标 page_or_ref 必须标明人教社转载 PDF 印刷页，并写明是转述" % where)
+                if "2026-11-06" not in str(it.get("text_status") or ""):
+                    err("%s 高中英语课标 text_status 必须记下 2026-11-06 的核对" % where)
         elif scm:
             saw_science = True
             level, code, num = scm.group(1), scm.group(2), int(scm.group(3))
@@ -950,11 +1017,24 @@ def check_standards_file(std):
             last[key] = num
             if it.get("verbatim") is not False:
                 err("%s 语文课标必须显式标 verbatim:false（原文未逐页核对）" % where)
-            if it.get("page_or_ref") != "待核":
+            ref = it.get("page_or_ref")
+            if level in ("1", "2", "3", "4"):
+                # 学段要求对照过人教社电子书印刷页。必须写明是转述，不能写成教育部 PDF 页码。
+                if not (isinstance(ref, str) and ref.startswith("人教社电子书印刷页") and "转述" in ref):
+                    err("%s 语文课标 page_or_ref 必须标明人教社电子书印刷页，并写明是转述" % where)
+                if "2026-11-06" not in str(it.get("text_status") or ""):
+                    err("%s 语文课标 text_status 必须记下 2026-11-06 的核对" % where)
+            elif ref != "待核":
                 err("%s 语文课标 page_or_ref 必须是「待核」，不能编页码" % where)
         elif mrm:
             saw_morality = True
-            level, code, num = mrm.group(1), mrm.group(2), int(mrm.group(3))
+            if mrm.group(1):
+                level, code, num = mrm.group(1), mrm.group(2), int(mrm.group(5))
+            else:
+                level, code, num = mrm.group(3), mrm.group(4), int(mrm.group(5))
+            allowed = MOR_PRIMARY_CODES if level in ("1", "2", "3") else MOR_JUNIOR_CODES
+            if code not in allowed:
+                err("%s 学段 %s 不能使用领域代码 %s" % (where, level, code))
             if it.get("domain") != MOR_STD_CODES[code]:
                 err("%s domain 与 id 中的领域代码不一致：%r" % (where, it.get("domain")))
             key = ("cds", level, code)
@@ -1017,8 +1097,31 @@ def check_standards_file(std):
                 err("%s 化学课标必须显式标 verbatim:false（原文未逐页核对）" % where)
             if it.get("page_or_ref") != "待核":
                 err("%s 化学课标 page_or_ref 必须是「待核」，不能编页码" % where)
+        elif chemmhs:
+            saw_chemistry_senior = True
+            book, code, num = chemmhs.group(1), chemmhs.group(2), int(chemmhs.group(3))
+            if it.get("domain") != CHEM_HS_STD_CODES[code]:
+                err("%s domain 与 id 中的主题代码不一致：%r" % (where, it.get("domain")))
+            key = ("cks-hs", book, code)
+            if num != last.get(key, 0) + 1:
+                err("%s 编号在主题内不连续（上一条为 %02d）" % (where, last.get(key, 0)))
+            last[key] = num
+            if it.get("verbatim") is not False:
+                err("%s 高中化学课标必须显式标 verbatim:false（对照官方 PDF 页码后仍是转述，不是逐字原文）" % where)
+            ref = it.get("page_or_ref")
+            if (
+                not isinstance(ref, str)
+                or not ref.startswith("2017年版印刷第")
+                or "PDF第" not in ref
+                or "转述" not in ref
+                or ref == "待核"
+                or "2020" in ref
+                or "2018年8月15日" in ref
+                or "以此为准" in ref
+            ):
+                err("%s 高中化学课标 page_or_ref 必须以「2017年版印刷第」开头，并含「PDF第」和「转述」，不得为「待核」或编造其他版本名" % where)
         else:
-            err("%s id 格式不合法（应为 cms-2022:<学段>.<NA|GG|SP|IP>.<NN>、cms-2017:H.<PRE|FUN|GA|PS|MI>.<NN>、ces-2022:<1|2|3>.<PH|VO|GR|FU|RW>.<NN> 、ces-2017:H.<B|S>.<PH|VO|GR|FU|RW>.<NN> 、ccs-2022:<1|2|3|4>.<PY|SZ|CY|JZ|YD|GS|XZ|WY|MZ>.<NN> 、css-2022:<1|2|3>.<WZ|SM|DQ|JG>.<NN> 、cds-2022:<1|2|3>.<LS|XX|JT|SH|GM|ZR>.<NN> 、chs-2022:<CA|CN|CM|WA|WN|WM>.<NN> 、cgs-2022:<EM|WG|CG>.<NN> 、cbs-2022:<BS|BD|BE|BP|BH|BG|BX>.<NN> 、cks-2022:<SQ|SP|SC|SR|SS>.<NN> 、cps-2022:<1-5>.<二级>.<序号> 或 cps-hs-2017:<B|S><1-3>.<1-4|X>.<序号>）" % where)
+            err("%s id 格式不合法（应为 cms-2022:<学段>.<NA|GG|SP|IP>.<NN>、cms-2017:H.<PRE|FUN|GA|PS|MI>.<NN>、ces-2022:<1|2|3>.<PH|VO|GR|FU|RW>.<NN> 、ces-2017:H.<B|S>.<PH|VO|GR|FU|RW>.<NN> 、ccs-2022:<1|2|3|4>.<PY|SZ|CY|JZ|YD|GS|XZ|WY|MZ>.<NN> 、css-2022:<1|2|3>.<WZ|SM|DQ|JG>.<NN> 、cds-2022:<1|2|3>.<LS|XX|JT|SH|GM|ZR>.<NN> 或 cds-2022:4.<JK|FZ|WH|GY|GQ>.<NN> 、chs-2022:<CA|CN|CM|WA|WN|WM>.<NN> 、cgs-2022:<EM|WG|CG>.<NN> 、cbs-2022:<BS|BD|BE|BP|BH|BG|BX>.<NN> 、cks-2022:<SQ|SP|SC|SR|SS>.<NN> 、cks-hs-2017:<B1|B2|S1|S2|S3>.<EX|IN|ST|OR|SO|TH|DR|AQ|EL|AT|MO|CR|OS|HY|BM|PM>.<NN> 、cps-2022:<1-5>.<二级>.<序号> 或 cps-hs-2017:<B|S><1-3>.<1-4|X>.<序号>）" % where)
         for f in ("domain", "section", "text"):
             if not nonempty_str(it.get(f)):
                 err("%s 字段 %s 缺失或为空" % (where, f))
@@ -1152,6 +1255,18 @@ def check_standards_file(std):
                 err("chemistry.title 必须是「义务教育化学课程标准（2022年版）」")
             if ch.get("year") != 2022:
                 err("chemistry.year 必须是 2022")
+    if saw_chemistry_senior:
+        chs = std.get("chemistry_senior")
+        if not isinstance(chs, dict):
+            err("有高中化学课标条目，但缺少 chemistry_senior 对象")
+        else:
+            for f in ("title", "issuer", "stage", "note"):
+                if not nonempty_str(chs.get(f)):
+                    err("chemistry_senior.%s 缺失或为空" % f)
+            if chs.get("title") != "普通高中化学课程标准（2017年版）":
+                err("chemistry_senior.title 必须是「普通高中化学课程标准（2017年版）」")
+            if chs.get("year") != 2017:
+                err("chemistry_senior.year 必须是 2017")
     return items_by_id
 
 
@@ -1211,10 +1326,20 @@ def check_topic_standards(ids, std_items):
                     err("%s 学科与课标条目不一致：%s" % (sw, sid))
                 if is_chemistry_id(tid) != str(sid).startswith("cks-"):
                     err("%s 学科与课标条目不一致：%s" % (sw, sid))
+                elif str(tid).startswith("cnk_j") and not str(sid).startswith("cks-2022:"):
+                    err("%s 初中化学只能引用 cks-2022：%s" % (sw, sid))
+                elif is_chemistry_senior_id(tid) and not (
+                    str(sid).startswith("cks-hs-2017:") or str(sid).startswith("cks-2022:")
+                ):
+                    err("%s 高中化学主引用是 cks-hs-2017，额外参考才可以是 cks-2022：%s" % (sw, sid))
             if s.get("confidence") not in CONFIDENCES:
                 err("%s confidence 只能是 exact 或 inferred：%r" % (sw, s.get("confidence")))
             if "note" in s and not nonempty_str(s["note"]):
                 err("%s note 为空" % sw)
+        if is_chemistry_senior_id(tid) and sts and not any(
+            isinstance(s, dict) and str(s.get("id", "")).startswith("cks-hs-2017:") for s in sts
+        ):
+            err("%s 高中化学必须引用 cks-hs-2017，不能只引用初中课标" % where)
     return cited, empty_core
 
 
@@ -1235,7 +1360,8 @@ def report_standards(ids, std_items, cited, empty_core):
                  "生物体的结构层次", "生物的多样性", "生物与环境", "植物的生活",
                  "人体生理与健康", "遗传与进化", "生物学与社会·跨学科实践",
                  "科学探究与化学实验", "物质的性质与应用", "物质的组成与结构",
-                 "物质的化学变化", "化学与社会·跨学科实践")
+                 "物质的化学变化", "化学与社会·跨学科实践",
+                 "化学科学与实验探究", "常见的无机物及其应用", "物质结构基础与化学反应规律")
     print("\n课标条目：%d 条（%s）" % (len(std_items), "，".join("%s %d" % (k, c[k]) for k in std_order if c[k])))
     n_ok = len(core) - len(empty_core)
     pct = 100.0 * n_ok / len(core) if core else 0.0
@@ -1272,7 +1398,7 @@ PURE_ARITH_CHOICE_RE = re.compile(
     r"^\d+(?:\.\d+)?(?:\s*[＋+\-－×*÷]\s*\d+(?:\.\d+)?)+ 的得数是哪一个？$"
 )
 CHALLENGE_BARE_CALC_RE = re.compile(r"^计算：.*＝？")
-Q_ID_RE = re.compile(r"^((?:cnm_(?:p|h)?|cne_[pjh]|cnp_h?|cnc_[pj]|cns_p|cnd_p|cnh_j|cng_j|cnb_j|cnk_j)\d{3,})_q([1-9]\d*)$")
+Q_ID_RE = re.compile(r"^((?:cnm_(?:p|h)?|cne_[pjh]|cnp_h?|cnc_[pj]|cns_p|cnd_[pj]|cnh_j|cng_j|cnb_j|cnk_[jh])\d{3,})_q([1-9]\d*)$")
 NUM_RE = re.compile(r"^-?\d+(?:\.\d+)?(?:/\d+(?:\.\d+)?)?$")
 MIN_QUESTIONS_PER_TOPIC = 3
 MIN_AUTO_SHARE = 0.60
@@ -1482,6 +1608,53 @@ def check_aliases(ids):
             err("别名 %s 缺少原名称 name" % key)
 
 
+def check_g2b_yard_split(ids, deps, questions):
+    """语文园地一的语气和《赋得古原草送别》必须分开，旧编号保持不变。"""
+    tone = ids.get("cnc_p124")
+    poem = ids.get("cnc_p494")
+    cun = ids.get("cnc_p120")
+    lei = ids.get("cnc_p125")
+    if not tone or tone.get("name") != "语文园地一·注意说话的语气":
+        err("cnc_p124 应仍是「语文园地一·注意说话的语气」")
+    elif "赋得" in (tone.get("description") or "") or "离离原上草" in (tone.get("description") or ""):
+        err("cnc_p124 的 description 仍混有《赋得古原草送别》")
+    if not poem or poem.get("name") != "语文园地一·日积月累《赋得古原草送别》":
+        err("缺少 cnc_p494「语文园地一·日积月累《赋得古原草送别》」")
+    elif poem.get("domain") != "古诗文积累" or poem.get("grade") != 2 or poem.get("semester") != "下":
+        err("cnc_p494 应是二年级下册古诗文积累")
+    if not cun or cun.get("name") != "古诗《村居》":
+        err("cnc_p120 应仍是古诗《村居》")
+    if not lei or lei.get("name") != "阅读《雷锋叔叔，你在哪里》":
+        err("cnc_p125 应仍是阅读《雷锋叔叔，你在哪里》")
+    poem_edges = [
+        e for e in deps
+        if e.get("prerequisiteId") == "cnc_p120" and "赋得古原草送别" in (e.get("reason") or "")
+    ]
+    if len(poem_edges) != 1 or poem_edges[0].get("topicId") != "cnc_p494" or poem_edges[0].get("strength") != "hard":
+        err("《村居》到《赋得古原草送别》的硬边应只挂在 cnc_p494")
+    if any(e.get("topicId") == "cnc_p124" and "赋得" in (e.get("reason") or "") for e in deps):
+        err("cnc_p124 上仍有以《赋得古原草送别》为内容的边")
+    if questions is None:
+        return
+    by = defaultdict(list)
+    for q in questions:
+        by[q.get("topicId")].append(q)
+    tone_qs = by.get("cnc_p124") or []
+    poem_qs = by.get("cnc_p494") or []
+    if len(tone_qs) < 4 or len(poem_qs) < 4:
+        err("cnc_p124 与 cnc_p494 都至少要有 4 题")
+    for q in tone_qs:
+        blob = (q.get("prompt") or "") + (q.get("explanation") or "")
+        if "离离原上草" in blob or "野火烧不尽" in blob or "赋得" in blob:
+            err("%s 仍在考《赋得古原草送别》" % q.get("id"))
+    if tone_qs and tone_qs[0].get("prompt") != "请别人帮忙时，语气怎样更合适？":
+        err("cnc_p124_q1 题干被改掉了")
+    if not any("离离原上草" in (q.get("prompt") or "") for q in poem_qs):
+        err("cnc_p494 没有考查「离离原上草」")
+    if not any("白居易" in ((q.get("prompt") or "") + (q.get("explanation") or "")) for q in poem_qs):
+        err("cnc_p494 没有考查作者白居易")
+
+
 def main():
     topics = load(TOPICS_PATH)
     deps = load(DEPS_PATH)
@@ -1497,6 +1670,8 @@ def main():
     print("教材版本对照（可选）：topic.mappings %d 个知识点；data/mappings %d 个文件、%d 条" % (
         n_topic_maps, n_map_files, n_map_entries))
     prereqs, dependents, n_hard, n_soft, n_en_hard, n_en_soft = check_deps(deps, ids)
+    qs_for_split = load(QUESTIONS_PATH) if os.path.exists(QUESTIONS_PATH) else None
+    check_g2b_yard_split(ids, deps, qs_for_split)
     check_graph(ids, prereqs, dependents)
     std_items = None
     if os.path.exists(STANDARDS_PATH):

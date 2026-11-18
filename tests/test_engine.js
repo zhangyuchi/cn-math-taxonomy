@@ -717,9 +717,10 @@ test('英语：小学 197、初中 180–260、高中 220–320，不与数学�
   assert.strictEqual(en8.label, '八年级上册');
   assert.ok(en8.ids.length > 0 && en8.ids.every((id) => id.startsWith('cne_j') && RG.byId[id].grade === 8 && RG.byId[id].semester === '上'));
   assert.ok(E.gradeTargets(RG, '八上').ids.every((id) => id.startsWith('cnm_')));
-  const en9 = E.gradeTargets(RG, '九全', 'english');
-  assert.strictEqual(en9.label, '九年级全一册');
-  assert.ok(en9.ids.length > 0 && en9.ids.every((id) => id.startsWith('cne_j') && RG.byId[id].grade === 9 && RG.byId[id].semester === '全'));
+  const en9 = E.gradeTargets(RG, '九上', 'english');
+  assert.strictEqual(en9.label, '九年级上册');
+  assert.ok(en9.ids.length > 0 && en9.ids.every((id) => id.startsWith('cne_j') && RG.byId[id].grade === 9 && RG.byId[id].semester === '上'));
+  assert.strictEqual(E.gradeTargets(RG, '九全', 'english'), null);
   const enGrade9 = E.gradeTargets(RG, '九年级', 'english');
   assert.ok(enGrade9.volumes.indexOf('九全') >= 0 && enGrade9.ids.every((id) => id.startsWith('cne_')));
   const mathGrade9 = E.gradeTargets(RG, '九年级');
@@ -728,6 +729,20 @@ test('英语：小学 197、初中 180–260、高中 220–320，不与数学�
     E.parseChapter('八年级下册 第8单元 Have you read Treasure Island yet'),
     { volume: '八下', chapterNo: '第8单元', chapterName: 'Have you read Treasure Island yet', section: '' }
   );
+  assert.deepStrictEqual(
+    E.parseChapter('七年级上册 待核'),
+    { volume: '七上', chapterNo: '待核', chapterName: '未挂到具体单元', section: '' }
+  );
+  const en7 = E.gradeTargets(RG, '七上', 'english');
+  assert.ok(en7.ids.indexOf('cne_j001') >= 0);
+  assert.strictEqual(en7.ids.filter((id) => RG.byId[id].chapter === '七年级上册 待核').length, 4);
+  assert.deepStrictEqual(
+    E.parseChapter('七年级下册 待核'),
+    { volume: '七下', chapterNo: '待核', chapterName: '未挂到具体单元', section: '' }
+  );
+  const en7b = E.gradeTargets(RG, '七下', 'english');
+  const pending7b = en7b.ids.filter((id) => RG.byId[id].chapter === '七年级下册 待核').sort();
+  assert.deepStrictEqual(pending7b, ['cne_j097']);
   assert.deepStrictEqual(
     E.parseChapter('必修第一册 欢迎单元 Welcome Unit'),
     { volume: '必修一', chapterNo: '欢迎单元', chapterName: 'Welcome Unit', section: '' }
@@ -758,10 +773,15 @@ test('英语：小学 197、初中 180–260、高中 220–320，不与数学�
   const ces = stdFile.items.filter((it) => String(it.id).startsWith('ces-2022:'));
   const ces3 = ces.filter((it) => String(it.id).indexOf('ces-2022:3.') === 0);
   assert.ok(ces.length >= 20 && ces3.length >= 20, '三级课标 ' + ces3.length);
-  assert.ok(ces.every((it) => it.verbatim === false && it.page_or_ref === '待核'));
+  const enPageOk = (it) => it.verbatim === false && (
+    it.page_or_ref === '待核' || (/印刷页/.test(it.page_or_ref) && /转述/.test(it.page_or_ref))
+  );
+  assert.ok(ces.every(enPageOk));
+  assert.ok(ces.some((it) => it.page_or_ref === '待核') && ces.some((it) => /印刷页/.test(it.page_or_ref)));
   const cesH = stdFile.items.filter((it) => String(it.id).startsWith('ces-2017:H.'));
   assert.ok(cesH.length >= 20, '高中英语课标 ' + cesH.length);
-  assert.ok(cesH.every((it) => it.verbatim === false && it.page_or_ref === '待核'));
+  assert.ok(cesH.every(enPageOk));
+  assert.ok(cesH.some((it) => it.page_or_ref === '待核') && cesH.some((it) => /印刷页/.test(it.page_or_ref)));
   assert.ok(cesH.some((it) => String(it.id).indexOf('ces-2017:H.B.') === 0));
   assert.ok(cesH.some((it) => String(it.id).indexOf('ces-2017:H.S.') === 0));
   assert.strictEqual(stdFile.english.senior.year, 2025);
@@ -971,7 +991,9 @@ test('真实数据：诊断题答案能被自己的判题器接受（判对率�
 test('真实数据：章节名可解析', () => {
   formal.forEach((t) => {
     const c = E.parseChapter(t.chapter);
-    assert.ok(c.volume && c.chapterNo && c.chapterName, t.chapter);
+    assert.ok(c.volume && c.chapterNo, t.chapter);
+    // 必修一绪言、选必一/选必二/选必三引言没有「第×章」后面的章名。其余正式点仍要有章名。
+    if (t.chapter !== '必修一 绪言' && t.chapter !== '选必一 引言' && t.chapter !== '选必二 引言' && t.chapter !== '选必三 引言') assert.ok(c.chapterName, t.chapter);
   });
 });
 
@@ -1066,9 +1088,45 @@ test('题库：初中地理有内联示意图', () => {
 });
 
 test('题库：初中化学有内联示意图', () => {
-  const chem = questions.filter((q) => String(q.topicId || '').startsWith('cnk_') && q.figure);
+  const chem = questions.filter((q) => String(q.topicId || '').startsWith('cnk_j') && q.figure);
   assert.ok(chem.length >= 35 && chem.length <= 50, '化学配图题数 ' + chem.length);
   ['cnk_j010_q1', 'cnk_j007_q2', 'cnk_j024_q1'].forEach((id) => {
+    const q = questions.find((item) => item.id === id);
+    assert.ok(q && q.figure && q.figure.indexOf('currentColor') > 0, id);
+    assert.ok(q.figure.indexOf('viewBox=') > 0, id);
+  });
+});
+
+test('题库：高中化学有内联示意图', () => {
+  const chem = questions.filter((q) => String(q.topicId || '').startsWith('cnk_h') && q.figure);
+  assert.ok(chem.length >= 40, '高中化学配图题数 ' + chem.length);
+  const bookOf = (id) => {
+    const n = Number(String(id).slice(5, 8));
+    if (n <= 19) return 'b1';
+    if (n <= 41) return 'b2';
+    if (n <= 64) return 's1';
+    if (n <= 78) return 's2';
+    return 's3';
+  };
+  const counts = { b1: 0, b2: 0, s1: 0, s2: 0, s3: 0 };
+  chem.forEach((q) => { counts[bookOf(q.id)] += 1; });
+  assert.ok(counts.b1 >= 8, '必修一配图 ' + counts.b1);
+  assert.ok(counts.b2 >= 8, '必修二配图 ' + counts.b2);
+  assert.ok(counts.s1 >= 10, '选必一配图 ' + counts.s1);
+  assert.ok(counts.s2 >= 8, '选必二配图 ' + counts.s2);
+  assert.ok(counts.s3 >= 8, '选必三配图 ' + counts.s3);
+  ['cnk_h010_q4', 'cnk_h026_q4', 'cnk_h059_q4', 'cnk_h070_q4', 'cnk_h073_q3', 'cnk_h093_q3'].forEach((id) => {
+    const q = questions.find((item) => item.id === id);
+    assert.ok(q && q.figure && q.figure.indexOf('currentColor') > 0, id);
+    assert.ok(q.figure.indexOf('viewBox=') > 0, id);
+    assert.ok(q.figure.indexOf('示意图，非比例') > 0, id);
+  });
+});
+
+test('题库：初中物理有内联示意图', () => {
+  const phy = questions.filter((q) => /^cnp_\d/.test(String(q.id || '')) && q.figure);
+  assert.ok(phy.length >= 48, '初中物理配图题数 ' + phy.length);
+  ['cnp_016_q3', 'cnp_033_q2', 'cnp_049_q3', 'cnp_065_q4', 'cnp_004_q3'].forEach((id) => {
     const q = questions.find((item) => item.id === id);
     assert.ok(q && q.figure && q.figure.indexOf('currentColor') > 0, id);
     assert.ok(q.figure.indexOf('viewBox=') > 0, id);
@@ -1514,6 +1572,171 @@ test('gradeTargets：一年级 = 一上 + 一下，七上只含七上；写法�
   assert.strictEqual(g9chemYear.ids.length, 45);
   assert.ok(g9chemYear.ids.every((id) => id.startsWith('cnk_') && RGQ.byId[id].grade === 9));
   assert.strictEqual(E.subjectOf(RGQ.byId[g9chem.ids[0]]), 'chemistry');
+  const chemHs = topics.filter((t) => /^cnk_h\d/.test(String(t.id)));
+  assert.strictEqual(chemHs.length, 102);
+  assert.deepStrictEqual(chemHs.map((t) => t.id), Array.from({ length: 102 }, (_, i) => 'cnk_h' + String(i + 1).padStart(3, '0')));
+  const chemHsB1 = chemHs.filter((t) => Number(String(t.id).slice(5)) <= 19);
+  const chemHsB2 = chemHs.filter((t) => {
+    const n = Number(String(t.id).slice(5));
+    return n >= 20 && n <= 41;
+  });
+  const chemHsS1 = chemHs.filter((t) => {
+    const n = Number(String(t.id).slice(5));
+    return n >= 42 && n <= 64;
+  });
+  const chemHsS2 = chemHs.filter((t) => {
+    const n = Number(String(t.id).slice(5));
+    return n >= 65 && n <= 78;
+  });
+  const chemHsS3 = chemHs.filter((t) => {
+    const n = Number(String(t.id).slice(5));
+    return n >= 79 && n <= 102;
+  });
+  assert.strictEqual(chemHsB1.length, 19);
+  assert.strictEqual(chemHsB2.length, 22);
+  assert.strictEqual(chemHsS1.length, 23);
+  assert.strictEqual(chemHsS2.length, 14);
+  assert.strictEqual(chemHsS3.length, 24);
+  chemHsB1.forEach((t) => {
+    assert.strictEqual(t.subject, 'chemistry');
+    assert.strictEqual(t.grade, 10);
+    assert.strictEqual(t.semester, '上');
+    assert.strictEqual(t.external, false);
+    assert.ok(String(t.chapter).indexOf('必修一') === 0, t.id);
+  });
+  chemHsB2.forEach((t) => {
+    assert.strictEqual(t.subject, 'chemistry');
+    assert.strictEqual(t.grade, 11);
+    assert.strictEqual(t.semester, '上');
+    assert.strictEqual(t.external, false);
+    assert.ok(String(t.chapter).indexOf('必修二') === 0, t.id);
+  });
+  chemHsS1.forEach((t) => {
+    assert.strictEqual(t.subject, 'chemistry');
+    assert.strictEqual(t.grade, 12);
+    assert.strictEqual(t.semester, '上');
+    assert.strictEqual(t.external, false);
+    assert.ok(String(t.chapter).indexOf('选必一') === 0, t.id);
+  });
+  chemHsS2.forEach((t) => {
+    assert.strictEqual(t.subject, 'chemistry');
+    assert.strictEqual(t.grade, 13);
+    assert.strictEqual(t.semester, '上');
+    assert.strictEqual(t.external, false);
+    assert.ok(String(t.chapter).indexOf('选必二') === 0, t.id);
+  });
+  chemHsS3.forEach((t) => {
+    assert.strictEqual(t.subject, 'chemistry');
+    assert.strictEqual(t.grade, 14);
+    assert.strictEqual(t.semester, '上');
+    assert.strictEqual(t.external, false);
+    assert.ok(String(t.chapter).indexOf('选必三') === 0, t.id);
+  });
+  const chemB1 = E.gradeTargets(RGQ, '必修一', 'chemistry');
+  assert.strictEqual(chemB1.label, '必修一（必修第一册）');
+  assert.deepStrictEqual(chemB1.ids, chemHsB1.map((t) => t.id));
+  chemB1.ids.forEach((id) => {
+    assert.ok(id.startsWith('cnk_h') && RGQ.byId[id].grade === 10, id);
+  });
+  assert.deepStrictEqual(E.gradeTargets(RGQ, '必修第一册', 'chemistry').ids, chemB1.ids);
+  const chemB2 = E.gradeTargets(RGQ, '必修二', 'chemistry');
+  assert.strictEqual(chemB2.label, '必修二（必修第二册）');
+  assert.deepStrictEqual(chemB2.ids, chemHsB2.map((t) => t.id));
+  chemB2.ids.forEach((id) => {
+    assert.ok(id.startsWith('cnk_h') && RGQ.byId[id].grade === 11, id);
+  });
+  assert.deepStrictEqual(E.gradeTargets(RGQ, '必修第二册', 'chemistry').ids, chemB2.ids);
+  const chemS1 = E.gradeTargets(RGQ, '选必一', 'chemistry');
+  assert.strictEqual(chemS1.label, '选必一（选择性必修第一册）');
+  assert.deepStrictEqual(chemS1.ids, chemHsS1.map((t) => t.id));
+  chemS1.ids.forEach((id) => {
+    assert.ok(id.startsWith('cnk_h') && RGQ.byId[id].grade === 12, id);
+  });
+  assert.deepStrictEqual(E.gradeTargets(RGQ, '选择性必修第一册', 'chemistry').ids, chemS1.ids);
+  const chemS2 = E.gradeTargets(RGQ, '选必二', 'chemistry');
+  assert.strictEqual(chemS2.label, '选必二（选择性必修第二册）');
+  assert.deepStrictEqual(chemS2.ids, chemHsS2.map((t) => t.id));
+  chemS2.ids.forEach((id) => {
+    assert.ok(id.startsWith('cnk_h') && RGQ.byId[id].grade === 13, id);
+  });
+  assert.deepStrictEqual(E.gradeTargets(RGQ, '选择性必修第二册', 'chemistry').ids, chemS2.ids);
+  const chemS3 = E.gradeTargets(RGQ, '选必三', 'chemistry');
+  assert.strictEqual(chemS3.label, '选必三（选择性必修第三册）');
+  assert.deepStrictEqual(chemS3.ids, chemHsS3.map((t) => t.id));
+  chemS3.ids.forEach((id) => {
+    assert.ok(id.startsWith('cnk_h') && RGQ.byId[id].grade === 14, id);
+  });
+  assert.deepStrictEqual(E.gradeTargets(RGQ, '选择性必修第三册', 'chemistry').ids, chemS3.ids);
+  assert.strictEqual(RGQ.byId.cnk_h079.name, '引言');
+  assert.strictEqual(RGQ.byId.cnk_h084.name, '烯烃、炔烃');
+  assert.strictEqual(RGQ.byId.cnk_h088.name, '醇、酚');
+  assert.strictEqual(RGQ.byId.cnk_h089.name, '醛、酮');
+  assert.strictEqual(RGQ.byId.cnk_h090.name, '羧酸、羧酸衍生物');
+  assert.strictEqual(RGQ.byId.cnk_h093.name, '实验活动1 乙酸乙酯的制备与性质');
+  assert.strictEqual(RGQ.byId.cnk_h099.name, '实验活动3 糖类的性质');
+  assert.strictEqual(E.gradeTargets(RGQ, '必修一'), null);
+  assert.strictEqual(E.gradeTargets(RGQ, '必修二'), null);
+  assert.deepStrictEqual(E.parseChapter('必修一 绪言'), { volume: '必修一', chapterNo: '绪言', chapterName: '', section: '' });
+  assert.deepStrictEqual(E.parseChapter('必修一 第三章 铁 金属材料 3.1'), {
+    volume: '必修一', chapterNo: '第三章', chapterName: '铁 金属材料', section: '3.1'
+  });
+  assert.deepStrictEqual(E.parseChapter('必修一 第四章 物质结构 元素周期律 整理与提升'), {
+    volume: '必修一', chapterNo: '第四章', chapterName: '物质结构 元素周期律', section: '整理与提升'
+  });
+  assert.deepStrictEqual(E.parseChapter('必修一 第四章 物质结构 元素周期律 实验活动3'), {
+    volume: '必修一', chapterNo: '第四章', chapterName: '物质结构 元素周期律', section: '实验活动3'
+  });
+  assert.deepStrictEqual(E.parseChapter('必修二 第五章 化工生产中的重要非金属元素 5.1'), {
+    volume: '必修二', chapterNo: '第五章', chapterName: '化工生产中的重要非金属元素', section: '5.1'
+  });
+  assert.deepStrictEqual(E.parseChapter('必修二 第五章 化工生产中的重要非金属元素 整理与提升'), {
+    volume: '必修二', chapterNo: '第五章', chapterName: '化工生产中的重要非金属元素', section: '整理与提升'
+  });
+  assert.deepStrictEqual(E.parseChapter('必修二 第五章 化工生产中的重要非金属元素 实验活动4'), {
+    volume: '必修二', chapterNo: '第五章', chapterName: '化工生产中的重要非金属元素', section: '实验活动4'
+  });
+  assert.deepStrictEqual(E.parseChapter('必修二 第七章 有机化合物 实验活动9'), {
+    volume: '必修二', chapterNo: '第七章', chapterName: '有机化合物', section: '实验活动9'
+  });
+  assert.deepStrictEqual(E.parseChapter('选必一 引言'), {
+    volume: '选必一', chapterNo: '引言', chapterName: '', section: ''
+  });
+  assert.deepStrictEqual(E.parseChapter('选必一 第一章 化学反应的热效应 整理与提升'), {
+    volume: '选必一', chapterNo: '第一章', chapterName: '化学反应的热效应', section: '整理与提升'
+  });
+  assert.deepStrictEqual(E.parseChapter('选必一 第二章 化学反应速率与化学平衡 实验活动1'), {
+    volume: '选必一', chapterNo: '第二章', chapterName: '化学反应速率与化学平衡', section: '实验活动1'
+  });
+  assert.deepStrictEqual(E.parseChapter('选必一 第四章 化学反应与电能 实验活动5'), {
+    volume: '选必一', chapterNo: '第四章', chapterName: '化学反应与电能', section: '实验活动5'
+  });
+  assert.deepStrictEqual(E.parseChapter('选必二 引言'), {
+    volume: '选必二', chapterNo: '引言', chapterName: '', section: ''
+  });
+  assert.deepStrictEqual(E.parseChapter('选必二 第一章 原子结构与性质 整理与提升'), {
+    volume: '选必二', chapterNo: '第一章', chapterName: '原子结构与性质', section: '整理与提升'
+  });
+  assert.deepStrictEqual(E.parseChapter('选必二 第三章 晶体结构与性质 实验活动'), {
+    volume: '选必二', chapterNo: '第三章', chapterName: '晶体结构与性质', section: '实验活动'
+  });
+  assert.deepStrictEqual(E.parseChapter('选必三 引言'), {
+    volume: '选必三', chapterNo: '引言', chapterName: '', section: ''
+  });
+  assert.deepStrictEqual(E.parseChapter('选必三 第二章 烃 2.2'), {
+    volume: '选必三', chapterNo: '第二章', chapterName: '烃', section: '2.2'
+  });
+  assert.deepStrictEqual(E.parseChapter('选必三 第三章 烃的衍生物 整理与提升'), {
+    volume: '选必三', chapterNo: '第三章', chapterName: '烃的衍生物', section: '整理与提升'
+  });
+  assert.deepStrictEqual(E.parseChapter('选必三 第三章 烃的衍生物 实验活动1'), {
+    volume: '选必三', chapterNo: '第三章', chapterName: '烃的衍生物', section: '实验活动1'
+  });
+  assert.deepStrictEqual(E.parseChapter('选必三 第四章 生物大分子 实验活动3'), {
+    volume: '选必三', chapterNo: '第四章', chapterName: '生物大分子', section: '实验活动3'
+  });
+  assert.deepStrictEqual(E.parseChapter('必修一 第一章 运动的描述 1.1'), {
+    volume: '必修一', chapterNo: '第一章', chapterName: '运动的描述', section: '1.1'
+  });
   assert.ok(E.gradeTargets(RGQ, '九上').ids.every((id) => id.startsWith('cnm_')));
   const g7 = E.gradeTargets(RGQ, '七年级');
   assert.strictEqual(g7.ids.length, formal.filter((t) => t.grade === 7 && String(t.id).startsWith('cnm_')).length);
@@ -1740,6 +1963,210 @@ test('普通整章 / 单点诊断不受影响：不带 mode 的会话仍回溯�
   const sum = E.summarize(RGQ, s);
   assert.strictEqual(sum.mode, 'target');
   sum.roots.forEach((r) => assert.deepStrictEqual(r.outOfScopePrereqs, []));
+});
+
+console.log('筛查只沿 hard 先修推断掌握（#34）');
+
+function hardReachFrom(graph, directIds) {
+  const reach = new Set();
+  const walk = (id) => graph.prereqs[id].forEach((p) => {
+    if (p.strength === 'hard' && !reach.has(p.id)) { reach.add(p.id); walk(p.id); }
+  });
+  directIds.forEach(walk);
+  return reach;
+}
+
+function screenTrace(spec, student, limit, seed, confirm) {
+  let s = E.createSession(RGQ, spec.ids, {
+    mode: 'screen', limit: limit, seed: seed == null ? 'scr' : seed,
+    confirm: confirm == null ? E.DEFAULT_CONFIRM : confirm
+  });
+  const steps = [];
+  for (let guard = 0; guard < 2000; guard++) {
+    const q = E.nextQuestion(RGQ, s);
+    if (!q) break;
+    const attempt = (s.attempts[q] || []).length + 1;
+    s = E.applyAnswer(RGQ, s, q, student(q, attempt));
+    steps.push({ id: q, attempt: attempt, status: s.status[q] ? s.status[q].s : null });
+  }
+  return { s: s, steps: steps };
+}
+
+test('筛查：答对后只沿 hard 先修推断掌握，soft 先修保持未测', () => {
+  const scope = ['F', 'E', 'C', 'D', 'B', 'T'];
+  let s = E.createSession(G, scope, { mode: 'screen' });
+  assert.strictEqual(E.nextQuestion(G, s), 'T');
+  s = E.applyAnswer(G, s, 'T', 'correct');
+  assert.strictEqual(s.status.T.src, 'direct');
+  ['C', 'D', 'E', 'F', 'X'].forEach((id) => {
+    assert.strictEqual(E.statusOf(s, id), 'mastered', id);
+    assert.strictEqual(s.status[id].src, 'inferred', id);
+  });
+  assert.strictEqual(E.statusOf(s, 'B'), 'unknown');
+  assert.strictEqual(E.nextQuestion(G, s), 'B');
+});
+
+test('筛查：soft 先修答对后才推断它自己的 hard 祖先', () => {
+  let s = E.createSession(G, ['F', 'E', 'C', 'D', 'B', 'T'], { mode: 'screen' });
+  s = E.applyAnswer(G, s, 'T', 'correct');
+  s = E.applyAnswer(G, s, 'B', 'correct');
+  assert.strictEqual(s.status.B.src, 'direct');
+  assert.strictEqual(E.nextQuestion(G, s), null);
+  const sum = E.summarize(G, s);
+  assert.deepStrictEqual(sum.untested, []);
+});
+
+test('筛查多跳：soft 边切断其后的 hard 链；target 模式仍推断全部祖先', () => {
+  const topicsS = [mk('R'), mk('S'), mk('A')];
+  const depsS = [
+    { topicId: 'S', prerequisiteId: 'R', strength: 'hard' },
+    { topicId: 'A', prerequisiteId: 'S', strength: 'soft' }
+  ];
+  const GS = E.buildGraph(topicsS, depsS);
+  let scr = E.createSession(GS, ['R', 'S', 'A'], { mode: 'screen' });
+  scr = E.applyAnswer(GS, scr, 'A', 'correct');
+  assert.strictEqual(E.statusOf(scr, 'A'), 'mastered');
+  assert.strictEqual(E.statusOf(scr, 'S'), 'unknown');
+  assert.strictEqual(E.statusOf(scr, 'R'), 'unknown');
+  let tgt = E.createSession(GS, ['A']);
+  tgt = E.applyAnswer(GS, tgt, 'A', 'correct');
+  assert.strictEqual(E.statusOf(tgt, 'S'), 'mastered');
+  assert.strictEqual(E.statusOf(tgt, 'R'), 'mastered');
+  assert.strictEqual(tgt.status.R.src, 'inferred');
+  let scr2 = E.createSession(GS, ['R', 'S', 'A'], { mode: 'screen' });
+  scr2 = E.applyAnswer(GS, scr2, 'A', 'correct');
+  assert.deepStrictEqual(scr2.status, scr.status);
+});
+
+test('筛查 soft-only：只有 soft 先修的点答对后不推断任何祖先', () => {
+  const topicsS = [mk('P'), mk('Q'), mk('W')];
+  const depsS = [
+    { topicId: 'W', prerequisiteId: 'P', strength: 'soft' },
+    { topicId: 'W', prerequisiteId: 'Q', strength: 'soft' }
+  ];
+  const GS = E.buildGraph(topicsS, depsS);
+  let s = E.createSession(GS, ['P', 'Q', 'W'], { mode: 'screen' });
+  s = E.applyAnswer(GS, s, 'W', 'correct');
+  assert.deepStrictEqual(Object.keys(s.status), ['W']);
+  const asked = [];
+  for (let i = 0; i < 10; i++) {
+    const q = E.nextQuestion(GS, s);
+    if (!q) break;
+    asked.push(q);
+    s = E.applyAnswer(GS, s, q, 'correct');
+  }
+  assert.deepStrictEqual(sorted(asked), ['P', 'Q']);
+  assert.strictEqual(E.summarize(GS, s).untested.length, 0);
+});
+
+test('筛查 hard-soft 混合：hard 祖先推断、soft 旁支仍要问', () => {
+  const topicsS = [mk('H1'), mk('H2'), mk('S1'), mk('T')];
+  const depsS = [
+    { topicId: 'H2', prerequisiteId: 'H1', strength: 'hard' },
+    { topicId: 'T', prerequisiteId: 'H2', strength: 'hard' },
+    { topicId: 'T', prerequisiteId: 'S1', strength: 'soft' }
+  ];
+  const GS = E.buildGraph(topicsS, depsS);
+  let s = E.createSession(GS, ['H1', 'H2', 'S1', 'T'], { mode: 'screen' });
+  s = E.applyAnswer(GS, s, 'T', 'correct');
+  assert.strictEqual(E.statusOf(s, 'H2'), 'mastered');
+  assert.strictEqual(E.statusOf(s, 'H1'), 'mastered');
+  assert.strictEqual(s.status.H1.src, 'inferred');
+  assert.strictEqual(E.statusOf(s, 'S1'), 'unknown');
+  assert.strictEqual(E.nextQuestion(GS, s), 'S1');
+});
+
+test('筛查：推断掌握不覆盖直接判定', () => {
+  let s = E.createSession(G, ['F', 'E', 'C', 'D', 'B', 'T'], { mode: 'screen' });
+  s = E.applyAnswer(G, s, 'E', 'wrong');
+  s = E.applyAnswer(G, s, 'T', 'correct');
+  assert.strictEqual(E.statusOf(s, 'E'), 'weak');
+  assert.strictEqual(E.statusOf(s, 'C'), 'mastered');
+});
+
+test('筛查全对（历史七上，confirm=3，limit=40）：不是 3 题结束整册掌握', () => {
+  const g = E.gradeTargets(RGQ, '七上', 'history');
+  const { s, steps } = screenTrace(g, allRight, 40, 'h34', 3);
+  const sum = E.summarize(RGQ, s);
+  const unique = Array.from(new Set(steps.map((x) => x.id)));
+  assert.ok(sum.asked > 3, '全对只问了 ' + sum.asked + ' 题');
+  assert.ok(unique.length > 1, '全对只问了 1 个知识点 ' + unique.join(','));
+  assert.ok(sum.mastered.length < g.ids.length || sum.asked === 40,
+    '未到上限却把整册标掌握：asked=' + sum.asked + ' mastered=' + sum.mastered.length);
+  const afterFirstMaster = steps.find((x) => x.id === unique[0] && x.status === 'mastered');
+  assert.ok(afterFirstMaster);
+  const idx = steps.indexOf(afterFirstMaster);
+  assert.ok(idx >= 2, 'confirm=3 应在第 3 题才掌握，实际 index=' + idx);
+  // 第 3 题掌握后不得把远古点沿 soft 链推断掉
+  const s3 = E.replay(RGQ, g.ids, s.answers.slice(0, idx + 1), { mode: 'screen', limit: 40, seed: 'h34', confirm: 3 });
+  assert.strictEqual(E.statusOf(s3, unique[0]), 'mastered');
+  assert.strictEqual(E.statusOf(s3, 'cnh_j001'), 'unknown', '末点掌握不应沿 soft 推断到远古人类活动');
+  const direct = Object.keys(s.status).filter((id) => s.status[id].src === 'direct' && s.status[id].s === 'mastered');
+  const reach = hardReachFrom(RGQ, direct);
+  Object.keys(s.status).filter((id) => s.status[id].src === 'inferred').forEach((id) => {
+    assert.ok(reach.has(id), id + ' 被沿非 hard 路径推断掌握');
+  });
+});
+
+test('筛查首题错（历史七上）：确认题对则不稳，不因推断提前结束', () => {
+  const g = E.gradeTargets(RGQ, '七上', 'history');
+  const firstWrong = (id, attempt) => (attempt === 1 ? 'wrong' : 'correct');
+  const { s, steps } = screenTrace(g, firstWrong, 40, 'h34w', 3);
+  const sum = E.summarize(RGQ, s);
+  assert.strictEqual(steps[0].status, null, '第一题错时尚无结论');
+  assert.strictEqual(s.status[steps[0].id].s, 'shaky');
+  assert.ok(sum.asked > 3);
+  assert.ok(new Set(steps.map((x) => x.id)).size > 1);
+  assert.ok(sum.shaky.length >= 1);
+  const inferred = Object.keys(s.status).filter((id) => s.status[id].src === 'inferred');
+  const directM = Object.keys(s.status).filter((id) => s.status[id].src === 'direct' && s.status[id].s === 'mastered');
+  const reach = hardReachFrom(RGQ, directM);
+  inferred.forEach((id) => assert.ok(reach.has(id), id));
+});
+
+test('筛查混合（历史七上）：部分对部分错时，掌握点的推断仍只走 hard', () => {
+  const g = E.gradeTargets(RGQ, '七上', 'history');
+  // 末点 j021 全对；其 soft 先修 j020 全错。j020 一定会出现在下一题（hard 不推断它）。
+  const mixed = (id) => (id === 'cnh_j020' ? 'wrong' : 'correct');
+  const { s, steps } = screenTrace(g, mixed, 40, 'h34m', 3);
+  const sum = E.summarize(RGQ, s);
+  assert.ok(sum.asked > 3);
+  assert.ok(sum.weak.length + sum.shaky.length > 0 || steps.some((x) => x.status === 'weak' || x.status === 'shaky'));
+  const directM = Object.keys(s.status).filter((id) => s.status[id].src === 'direct' && s.status[id].s === 'mastered');
+  const reach = hardReachFrom(RGQ, directM);
+  Object.keys(s.status).filter((id) => s.status[id].src === 'inferred').forEach((id) => {
+    assert.ok(reach.has(id), id + ' 混合作答下仍被沿 soft 推断');
+  });
+  const inScope = new Set(g.ids);
+  s.answers.forEach((a) => assert.ok(inScope.has(a.id), '问到范围外 ' + a.id));
+});
+
+test('筛查跨册过滤：历史七上不问卷内以外的点', () => {
+  const g = E.gradeTargets(RGQ, '七上', 'history');
+  const inScope = new Set(g.ids);
+  [[allRight, 40], [allWrong, 40], [indexStudent, 40]].forEach(([stu, limit]) => {
+    const s = screenRun(g, stu, limit, 'h34x', 3);
+    s.answers.forEach((a) => assert.ok(inScope.has(a.id), a.id));
+    const sum = E.summarize(RGQ, s);
+    sum.mastered.concat(sum.shaky, sum.weak, sum.untested).forEach((id) => assert.ok(inScope.has(id)));
+  });
+  const g7 = E.gradeTargets(RGQ, '七年级', 'history');
+  assert.ok(g7.ids.length > g.ids.length);
+  const extra = g7.ids.filter((id) => !inScope.has(id));
+  const s = screenRun(g, allRight, 40, 'h34x2', 3);
+  extra.forEach((id) => assert.ok(!s.answers.some((a) => a.id === id), '问到了七下 ' + id));
+});
+
+test('筛查真实数据（历史七上 confirm=1）：推断点均可沿 hard 到达，且不是 1 题结束', () => {
+  const g = E.gradeTargets(RGQ, '七上', 'history');
+  const s = screenRun(g, allRight, 1000, 'scr', 1);
+  const direct = Object.keys(s.status).filter((id) => s.status[id].src === 'direct' && s.status[id].s === 'mastered');
+  const reach = hardReachFrom(RGQ, direct);
+  const inferred = Object.keys(s.status).filter((id) => s.status[id].src === 'inferred');
+  inferred.forEach((id) => assert.ok(reach.has(id), id + ' 不应沿 soft 先修推断'));
+  assert.ok(direct.length > 3, '只直接问了 ' + direct.length + ' 个点');
+  assert.strictEqual(E.summarize(RGQ, s).mastered.length, g.ids.length);
+  assert.ok(!inferred.includes('cnh_j001') || reach.has('cnh_j001'));
 });
 
 console.log('\n' + passed + ' passed, ' + failed + ' failed');

@@ -6,8 +6,20 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 DIST="${TMPDIR:-/tmp}/cn-math-pages-dist.$$"
 ACCOUNT_ID="${CLOUDFLARE_ACCOUNT_ID:-6799c67ce94928e7fc4136842327a18f}"
 export CLOUDFLARE_ACCOUNT_ID="$ACCOUNT_ID"
-export XDG_CACHE_HOME="${XDG_CACHE_HOME:-/tmp/xdg-cache}"
-mkdir -p "$XDG_CACHE_HOME" "$DIST/data"
+# wrangler 4.86.0 getCacheFolder() reads WRANGLER_CACHE_DIR, then falls back to
+# <nearest node_modules>/.cache/wrangler (here that is /node_modules/.cache/wrangler).
+# XDG_CACHE_HOME is not consulted for that path.
+if [[ -n "${WRANGLER_CACHE_DIR:-}" ]]; then
+  if ! mkdir -p "$WRANGLER_CACHE_DIR" 2>/dev/null || [[ ! -w "$WRANGLER_CACHE_DIR" ]]; then
+    WRANGLER_CACHE_DIR="${TMPDIR:-/tmp}/cn-math-wrangler-cache"
+    mkdir -p "$WRANGLER_CACHE_DIR"
+  fi
+else
+  WRANGLER_CACHE_DIR="${TMPDIR:-/tmp}/cn-math-wrangler-cache"
+  mkdir -p "$WRANGLER_CACHE_DIR"
+fi
+export WRANGLER_CACHE_DIR
+mkdir -p "$DIST/data"
 
 cp "$ROOT/index.html" "$ROOT/sw.js" "$ROOT/manifest.webmanifest" "$DIST/"
 [[ -f "$ROOT/.nojekyll" ]] && cp "$ROOT/.nojekyll" "$DIST/"
@@ -15,6 +27,8 @@ cp -a "$ROOT/assets" "$DIST/"
 cp -a "$ROOT/explore" "$DIST/"
 cp -a "$ROOT/diagnose" "$DIST/"
 cp -a "$ROOT/children" "$DIST/"
+cp -a "$ROOT/goods" "$DIST/"
+cp -a "$ROOT/wrongbook" "$DIST/"
 rm -f "$DIST/diagnose/README.md"
 cp "$ROOT/data/topics.json" \
    "$ROOT/data/dependencies.json" \
@@ -22,6 +36,11 @@ cp "$ROOT/data/topics.json" \
    "$ROOT/data/questions.json" \
    "$ROOT/data/id-aliases.json" \
    "$DIST/data/"
+
+# 知识点静态页 / sitemap / robots（生成失败时 set -e 直接让脚本非零退出）
+node "$ROOT/scripts/gen-kp-pages.mjs" --out "$DIST"
+[[ -f "$ROOT/robots.txt" ]] && cp "$ROOT/robots.txt" "$DIST/"
+[[ -f "$ROOT/sitemap.xml" ]] && cp "$ROOT/sitemap.xml" "$DIST/"
 
 echo "Deploying $(du -sh "$DIST" | awk '{print $1}') from $DIST ..."
 # Upload often succeeds even if wrangler then trips on a local cache path; check exit and pages.dev.
